@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<!-- 导出长图验证夹具：加载真实脚本 → 等待渲染 → 生成 PNG 并整幅展示 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>export-harness</title>
+<link rel="stylesheet" href="../../assets/css/main.css">
+<style>
+  body { margin: 0; background: #f2f5f9; }
+  #out img { width: 100%; display: block; }
+</style>
+</head>
+<body data-page="sim">
+
+<main><div class="wrap" id="sim-body"></div></main>
+<div id="out"></div>
+
+<script src="../../assets/js/data.js"></script>
+<script src="../../assets/js/core.js"></script>
+<script src="../../assets/js/datasource.js"></script>
+<script src="../../assets/js/app.js"></script>
+<script src="../../assets/js/pages-sim.js"></script>
+<script src="../../assets/js/boot.js"></script>
+<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    try {
+      var url = window.JX.simExportDataURL();
+      if (!url) { document.title = 'EMPTY'; return; }
+      document.title = 'PNG:' + url.length;
+      if (location.search.indexOf('modal=1') > -1) { window.JX.simExportPNG(); return; }
+      var img = new Image();
+      img.src = url;
+      img.alt = 'sim export preview';
+      document.getElementById('out').appendChild(img);
+    } catch (e) {
+      document.title = 'ERR:' + e.message;
+    }
+  }, 900);
+});
+</script>
+</body>
+</html>

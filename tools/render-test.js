@@ -21,7 +21,7 @@ var FIXTURE = path.join(__dirname, 'fixtures', 'sporttery-sample.json');
 var PAGES = [
   { file: 'index.html', key: 'home', target: 'home-body', min: 4000, must: ['match-list', '今日赛事'] },
   { file: 'match.html', key: 'match', target: 'match-body', min: 6000, must: ['模型结论', '总进球数分布', '比分概率矩阵', '本场风险因子'] },
-  { file: 'sim.html', key: 'sim', target: 'sim-body', min: 4000, must: ['串关模拟', '模拟参数', '模拟结果', '串关的数学事实'] },
+  { file: 'sim.html', key: 'sim', target: 'sim-body', min: 4000, must: ['串关模拟', '模拟参数', '模拟结果', '串关的数学事实', '导出结果图片'] },
   { file: 'parlay.html', key: 'parlay', target: 'parlay-body', min: 6000, must: ['串关组合清单', '自动', '手动添加组合腿', '资金计划'] },
   { file: 'model.html', key: 'model', target: 'model-body', min: 8000, must: ['Dixon-Coles', '校准验证', '资金管理规则'] },
   { file: 'records.html', key: 'records', target: 'records-body', min: 6000, must: ['周度命中率', '月度复盘', '按玩法拆分'] },

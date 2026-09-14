@@ -131,6 +131,8 @@
   }
 
   /* ------------------------------------------------------------ 主渲染 */
+  var lastSim = null;   // 供 PNG 导出复用的最近一次计算结果
+
   function renderSim() {
     var host = U.byId('sim-body');
     if (!host) return;
@@ -148,6 +150,7 @@
       combos.sort(function (a, b) { return b.p - a.p; });
     }
     var shown = combos.slice(0, 15);
+    lastSim = { cfg: cfg, k: state.k, dayL: DAY_L[state.day] || state.day, groups: groups, legTotal: legTotal, combos: combos, shown: shown, lo: lo, hi: hi };
 
     host.innerHTML =
       head(cfg) +
@@ -248,7 +251,9 @@
         '</div></div>';
     }
     return '<div class="card mt16"><div class="card-h"><h2>模拟结果 · ' + U.esc(cfg.l) + '</h2>' +
-      '<span class="hint">' + state.k + ' 串 1 · 组合赔率 ' + lo + '~' + hi + ' 倍</span></div>' + body + '</div>';
+      '<span class="hint">' + state.k + ' 串 1 · 组合赔率 ' + lo + '~' + hi + ' 倍</span>' +
+      (combos.length ? '<button class="btn-ghost" data-simexport style="margin-left:12px">导出结果图片（PNG 长图）</button>' : '') +
+      '</div>' + body + '</div>';
   }
 
   function mathCard() {
@@ -267,6 +272,242 @@
         '<p class="small mb0">本页回答的是"这些推荐方向按不同玩法与赔率区间组合后，概率/赔率/EV 长什么样"，' +
         '不是"哪一串会中"。请把它当作理解串关结构的计算器，而不是选号器。</p></div>' +
       '</div></div></div>';
+  }
+
+  /* ============================================================ PNG 导出 */
+  /* 纯 Canvas 手绘长图：1080px 逻辑宽、2x 物理像素，两段式布局
+     （先量高度再画），所有文本先测宽再截断，保证不重叠。 */
+
+  var FONT = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif';
+  var EX = {
+    bg: '#f2f5f9', panel: '#ffffff', line: '#e2e8f0',
+    brand: '#123a6b', brand2: '#1b5296', accent: '#c8952c',
+    ink: '#16202e', ink2: '#47566b', ink3: '#7d8b9e',
+    pos: '#cf2b2b', neg: '#0f8a5f', goldSoft: '#fdf3dc'
+  };
+  var DAY_L = { today: '今日', tomorrow: '明日', after: '后天' };
+
+  function fmtOdds(x) { return U.odds(x); }
+  function fmtPct(x) { return U.pct(x, 2); }
+  function nowStr2() {
+    var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function fileName() {
+    var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return 'jingxi-sim-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()) + '.png';
+  }
+
+  function rr(ctx, x, y, w, h, r) {
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); return; }
+    var r2 = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r2, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r2);
+    ctx.arcTo(x + w, y + h, x, y + h, r2);
+    ctx.arcTo(x, y + h, x, y, r2);
+    ctx.arcTo(x, y, x + w, y, r2);
+    ctx.closePath();
+  }
+  function fit(ctx, txt, maxW) {
+    txt = String(txt);
+    if (ctx.measureText(txt).width <= maxW) return txt;
+    while (txt.length > 1 && ctx.measureText(txt + '…').width > maxW) txt = txt.slice(0, -1);
+    return txt + '…';
+  }
+
+  function exportPNG() {
+    var S = lastSim;
+    if (!S || !S.shown || !S.shown.length) {
+      window.alert('当前没有可导出的模拟结果：请先调整参数生成组合。');
+      return;
+    }
+    try {
+      var url = drawSimPNG(S);
+      showExportModal(url);
+    } catch (e) {
+      window.alert('导出失败：' + (e && e.message ? e.message : '当前浏览器不支持 Canvas 绘制。'));
+    }
+  }
+
+  function drawSimPNG(S) {
+    var W = 1080, PAD = 48, GAP = 16;
+    var measure = document.createElement('canvas').getContext('2d');
+    function f(sz, wt) { measure.font = (wt || 400) + ' ' + sz + 'px ' + FONT; return measure; }
+
+    /* ---------- 两段式：先算每张卡高度与总高 ---------- */
+    var items = S.shown.map(function (c) {
+      return {
+        rank: 0,
+        odds: c.sp, p: c.p, fair: 1 / c.p, ev: evOf(c),
+        src: c.legs.every(function (x) { return x.leg.src === '推荐明细'; }) ? '推荐明细依据' : '含模型首选',
+        legs: c.legs.map(function (x) {
+          return { no: x.g.no, name: x.g.name, play: x.leg.play, sel: x.leg.sel, sp: x.leg.sp };
+        })
+      };
+    });
+    items.forEach(function (it, i) { it.rank = i + 1; });
+
+    var CARD_X = PAD, CARD_W = W - PAD * 2, IN = 26;
+    var LEG_H = 36, STATS_W = 218, RANK_W = 68;
+    /* 场次号统一取全图最宽测量值，保证各行正文左对齐且不与腿号重叠 */
+    var noW = 0;
+    items.forEach(function (it) {
+      it.legs.forEach(function (lg) {
+        noW = Math.max(noW, f(14.5, 600).measureText(lg.no).width + 12);
+      });
+    });
+    var legsMaxW = CARD_W - IN * 2 - RANK_W - STATS_W - 20;
+    items.forEach(function (it) {
+      it.legs.forEach(function (lg) {
+        lg.line = fit(f(15, 400), lg.name + '   ' + lg.play + ' · ' + lg.sel + ' @' + fmtOdds(lg.sp), legsMaxW - noW);
+      });
+      it.h = IN + Math.max(it.legs.length * LEG_H + 6, 156) + IN - 8;
+    });
+
+    var kpis = [
+      { l: '候选腿 / 覆盖场次', v: S.legTotal + ' / ' + S.groups.length + ' 场' },
+      { l: '区间内组合数', v: S.combos.length.toLocaleString('en-US') },
+      { l: '最高组合赔率', v: fmtOdds(S.combos[0].sp) },
+      { l: '展示方案', v: '前 ' + items.length + ' 组' }
+    ];
+    var KPI_W = (CARD_W - GAP * 3) / 4, KPI_H = 92;
+    var HEAD_H = 188, KPI_TOP = 30, FOOT_H = 96, SECT_T = 26;
+    var totalH = HEAD_H + KPI_TOP + KPI_H + SECT_T + SECT_T +
+      items.reduce(function (s, it) { return s + it.h + GAP; }, -GAP) +
+      SECT_T + FOOT_H;
+
+    /* ---------- 画布 ---------- */
+    var SCALE = 2;
+    var cv = document.createElement('canvas');
+    cv.width = W * SCALE; cv.height = Math.ceil(totalH) * SCALE;
+    var ctx = cv.getContext('2d');
+    ctx.scale(SCALE, SCALE);
+    function sf(sz, wt) { ctx.font = (wt || 400) + ' ' + sz + 'px ' + FONT; }
+    function ink(c) { ctx.fillStyle = c; }
+
+    /* 背景 */
+    ink(EX.bg); ctx.fillRect(0, 0, W, totalH);
+
+    /* ---------- 头部（品牌渐变） ---------- */
+    var grad = ctx.createLinearGradient(0, 0, W, HEAD_H);
+    grad.addColorStop(0, EX.brand); grad.addColorStop(1, EX.brand2);
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, W, HEAD_H);
+    ink('rgba(255,255,255,.55)'); sf(15, 500);
+    ctx.fillText('竞析 JINGXI · 串关模拟', PAD, 44);
+    ink('#ffffff'); sf(38, 700);
+    ctx.fillText(fit(ctx, S.cfg.l + ' · ' + S.k + ' 串 1', W - PAD * 2 - 220), PAD, 96);
+    sf(26, 700); ink(EX.accent);
+    var tagTxt = '组合赔率 ' + S.lo + '~' + S.hi + ' 倍';
+    ctx.fillText(tagTxt, W - PAD - ctx.measureText(tagTxt).width, 60);
+    ink('rgba(255,255,255,.78)'); sf(15, 400);
+    ctx.fillText('日期：' + (S.dayL || state.day) + '　·　排序：' +
+      (S.cfg.k === 'oddsMix' ? 'EV 降序' : '联合概率降序') + '　·　生成时间：' + nowStr2(), PAD, 138);
+    ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PAD, 158); ctx.lineTo(W - PAD, 158); ctx.stroke();
+    ink('rgba(255,255,255,.6)'); sf(12.5, 400);
+    ctx.fillText('联合概率 = 各腿模型概率相乘（独立性近似）；EV = 联合概率 × 组合赔率 − 1。模拟为结构参考，不构成任何盈利承诺。', PAD, 180);
+
+    /* ---------- KPI 行 ---------- */
+    var y = HEAD_H + KPI_TOP;
+    kpis.forEach(function (k, i) {
+      var kx = PAD + i * (KPI_W + GAP);
+      ink(EX.panel); rr(ctx, kx, y, KPI_W, KPI_H, 14); ctx.fill();
+      ctx.strokeStyle = EX.line; ctx.stroke();
+      ink(EX.ink3); sf(13, 400);
+      ctx.fillText(fit(ctx, k.l, KPI_W - 28), kx + 14, y + 32);
+      ink(EX.ink); sf(26, 700);
+      ctx.fillText(fit(ctx, k.v, KPI_W - 28), kx + 14, y + 68);
+    });
+    y += KPI_H + SECT_T;
+
+    /* ---------- 方案卡片 ---------- */
+    items.forEach(function (it) {
+      ink(EX.panel); rr(ctx, CARD_X, y, CARD_W, it.h, 16); ctx.fill();
+      ctx.strokeStyle = it.rank === 1 ? EX.accent : EX.line; ctx.lineWidth = it.rank === 1 ? 1.6 : 1; ctx.stroke();
+      ctx.lineWidth = 1;
+
+      /* 名次徽章 */
+      var bc = it.rank === 1 ? EX.accent : it.rank === 2 ? EX.brand2 : it.rank === 3 ? '#7d8b9e' : '#dfe6ef';
+      ink(bc); ctx.beginPath(); ctx.arc(CARD_X + IN + 22, y + IN + 16, 21, 0, Math.PI * 2); ctx.fill();
+      ink(it.rank <= 3 ? '#ffffff' : EX.ink2); sf(16, 700);
+      var rs = String(it.rank);
+      ctx.fillText(rs, CARD_X + IN + 22 - ctx.measureText(rs).width / 2, y + IN + 22);
+
+      /* 右侧统计列 */
+      var sx = CARD_X + CARD_W - IN, sw = STATS_W;
+      var ty = y + IN + 8;
+      ink(it.src === '推荐明细依据' ? EX.neg : EX.brand); sf(11.5, 600);
+      var tag = '· ' + it.src;
+      ctx.fillText(tag, sx - ctx.measureText(tag).width, ty); ty += 34;
+      ink(EX.brand); sf(34, 800);
+      var od = fmtOdds(it.odds);
+      ctx.fillText(od, sx - ctx.measureText(od).width, ty + 14); ty += 44;
+      sf(14, 400); ink(EX.ink2);
+      var row2 = '联合概率 ' + fmtPct(it.p);
+      ctx.fillText(row2, sx - ctx.measureText(row2).width, ty); ty += 24;
+      var row3 = '公平赔率 ' + (Math.round(it.fair * 100) / 100).toFixed(2);
+      ctx.fillText(row3, sx - ctx.measureText(row3).width, ty); ty += 24;
+      sf(15, 700); ink(it.ev >= 0 ? EX.pos : EX.neg);
+      var row4 = 'EV ' + (it.ev >= 0 ? '+' : '') + (it.ev * 100).toFixed(1) + '%';
+      ctx.fillText(row4, sx - ctx.measureText(row4).width, ty);
+
+      /* 左侧腿清单（每腿一行，先截断保不重叠） */
+      var lx = CARD_X + IN + RANK_W;
+      var ly = y + IN + 6;
+      it.legs.forEach(function (lg, li) {
+        sf(14.5, 600); ink(EX.ink);
+        ctx.fillText(lg.no, lx, ly + li * LEG_H + 14);
+        sf(14.5, 400); ink(EX.ink2);
+        ctx.fillText(lg.line, lx + noW, ly + li * LEG_H + 14);
+        if (li < it.legs.length - 1) {
+          ctx.strokeStyle = '#eef2f7';
+          ctx.beginPath(); ctx.moveTo(lx, ly + li * LEG_H + 26); ctx.lineTo(lx + legsMaxW, ly + li * LEG_H + 26); ctx.stroke();
+        }
+      });
+
+      y += it.h + GAP;
+    });
+    y += SECT_T - GAP;
+
+    /* ---------- 页脚 ---------- */
+    var ds = (global.JX.DS && global.JX.DS.state) ? global.JX.DS.state() : {};
+    ink(EX.ink3); sf(12.5, 400);
+    ctx.fillText('数据：中国体彩网官方接口 · 数据时间 ' + (ds.remoteUpdate || ds.updatedAt || '—') + ' · 模式 ' + (ds.mode || '—'), PAD, y + 24);
+    ctx.fillText('水位随关数相乘、概率随关数相除：串关越多，期望越差。本图由模型自动计算生成，仅供结构参考，请理性购彩。', PAD, y + 48);
+
+    return cv.toDataURL('image/png');
+  }
+
+  function showExportModal(url) {
+    var old = document.getElementById('sim-export-mask');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var mask = document.createElement('div');
+    mask.id = 'sim-export-mask';
+    var name = fileName();
+    mask.innerHTML =
+      '<div class="sexp-box">' +
+        '<div class="sexp-bar">' +
+          '<div class="sexp-t"><b>结果长图已生成</b><span>手机长按图片即可保存 · 电脑可点「下载 PNG」或右键另存为</span></div>' +
+          '<div class="sexp-acts"><a class="btn-brand" id="sexp-dl" href="' + url + '" download="' + name + '">下载 PNG</a>' +
+          '<button class="btn-ghost" id="sexp-close">关闭</button></div>' +
+        '</div>' +
+        '<div class="sexp-scroll"><img class="sexp-img" alt="串关模拟结果长图"></div>' +
+      '</div>';
+    document.body.appendChild(mask);
+    mask.querySelector('.sexp-img').src = url;
+    function close() { if (mask.parentNode) mask.parentNode.removeChild(mask); }
+    mask.querySelector('#sexp-close').addEventListener('click', close);
+    mask.addEventListener('click', function (e) { if (e.target === mask) close(); });
+    var dl = mask.querySelector('#sexp-dl');
+    dl.addEventListener('click', function (e) {
+      /* 微信/部分浏览器不支持 download 属性：给出提示，保留长按保存路径 */
+      var ua = navigator.userAgent || '';
+      if (/MicroMessenger/i.test(ua)) {
+        e.preventDefault();
+        window.alert('在微信内无法直接下载：请长按上方图片，选择「保存图片」到手机相册。');
+      }
+    });
   }
 
   /* ------------------------------------------------------------ 事件绑定 */
@@ -303,7 +544,11 @@
     if (hi) hi.addEventListener('change', applyRange);
     var incl = U.byId('sim-incl');
     if (incl) incl.addEventListener('change', function () { state.inclModel = this.checked; save(); renderSim(); });
+    U.on(document, 'click', '[data-simexport]', function () { exportPNG(); });
   }
 
   JX.renderSim = renderSim;
+  JX.simExportPNG = exportPNG;
+  /* 供测试/外部调用：直接返回当前结果的 PNG dataURL（无结果时返回 null） */
+  JX.simExportDataURL = function () { return lastSim ? drawSimPNG(lastSim) : null; };
 })(window);
