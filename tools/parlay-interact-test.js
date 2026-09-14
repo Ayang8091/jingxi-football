@@ -90,6 +90,32 @@ setTimeout(function () {
   ck('锁定记录已保存（1 期）', saved.locked && saved.locked['1'] && +saved.locked['1'].odds > 1);
   ck('模式已保存为 fixed', saved.mode === 'fixed');
 
+  console.log('== 8. 手动添加腿 / 删除腿 ==');
+  function setV(id, v) { var el = w.document.getElementById(id); if (!el) return false; el.value = v; return true; }
+  var okForm = setV('m-name', '测试队A vs 测试队B') && setV('m-play', '总进球') && setV('m-sel', '3球') &&
+    setV('m-sp', '3.25') && setV('m-p', '42');
+  ck('手动腿表单字段齐全', okForm);
+  click('[data-addleg]');
+  ck('手动腿已入池（标签「手动」）', body().indexOf('手动') > -1 && body().indexOf('测试队A') > -1);
+  ck('手动腿自动勾选（勾选数=4）：实际 ' + w.document.querySelectorAll('[data-leg]:checked').length,
+    w.document.querySelectorAll('[data-leg]:checked').length === 4);
+  var saved2 = JSON.parse(w.localStorage.getItem('jx.parlay.plan.v1') || '{}');
+  ck('手动腿已持久化', Array.isArray(saved2.customLegs) && saved2.customLegs.length === 1 && saved2.customLegs[0].sp === 3.25);
+  var delBtn = w.document.querySelector('[data-delleg]');
+  ck('删除按钮存在', !!delBtn);
+  click('[data-delleg]');
+  ck('删除后手动腿移除', body().indexOf('测试队A') === -1);
+  var saved3 = JSON.parse(w.localStorage.getItem('jx.parlay.plan.v1') || '{}');
+  ck('删除后持久化同步', (!saved3.customLegs || saved3.customLegs.length === 0));
+
+  console.log('== 9. 添加腿校验 ==');
+  setV('m-name', '坏数据测试'); setV('m-sp', '1'); setV('m-p', '50');
+  click('[data-addleg]');
+  ck('SP<=1 被拒绝（提示出现）', body().indexOf('SP 赔率必须大于 1') > -1);
+  setV('m-sp', '2.5'); setV('m-p', '120');
+  click('[data-addleg]');
+  ck('概率>100 被拒绝', body().indexOf('模型概率需在 0~100 之间') > -1);
+
   console.log('\n' + (fail === 0 ? '交互测试全部通过：' + pass + ' 项' : '通过 ' + pass + ' / 失败 ' + fail));
   process.exit(fail ? 1 : 0);
 }, 80);

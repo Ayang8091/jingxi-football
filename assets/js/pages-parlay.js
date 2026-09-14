@@ -31,7 +31,8 @@
     locked: {},           // n -> { odds, stake, legs }
     curOdds: null,        // 当期编辑值（null = 按当前票自动推算）
     curStake: null,
-    clearedRef: false     // 参考期是否已被用户清除
+    clearedRef: false,    // 参考期是否已被用户清除
+    customLegs: []        // 手动添加的自定义腿（独立编辑内容）
   };
 
   /* --------------------------------------------------------- 状态持久化 */
@@ -39,7 +40,8 @@
     try { localStorage.setItem(STORE_KEY, JSON.stringify({
       day: state.day, mode: state.mode, F: state.F, C: state.C, N: state.N,
       autoN: state.autoN, picked: state.picked, cur: state.cur,
-      locked: state.locked, clearedRef: state.clearedRef
+      locked: state.locked, clearedRef: state.clearedRef,
+      customLegs: state.customLegs
     })); } catch (e) { }
   }
   (function load() {
@@ -48,9 +50,10 @@
       if (!s) return;
       var o = JSON.parse(s);
       if (!o) return;
-      ['day', 'mode', 'F', 'C', 'N', 'autoN', 'picked', 'cur', 'locked', 'clearedRef'].forEach(function (k) {
+      ['day', 'mode', 'F', 'C', 'N', 'autoN', 'picked', 'cur', 'locked', 'clearedRef', 'customLegs'].forEach(function (k) {
         if (o[k] !== undefined) state[k] = o[k];
       });
+      if (!Array.isArray(state.customLegs)) state.customLegs = [];
       if (state.cur < 1) state.cur = 1;
       if (state.cur > state.N) state.cur = state.N;
     } catch (e) { }
@@ -69,9 +72,34 @@
   }
 
   /* ------------------------------------------------------------- 腿池与票 */
+  function customToLeg(c) {
+    /* 自定义腿：与接口腿同构，可参与全部组合/计划计算 */
+    var name = String(c.name || '自选场次');
+    var home = name.split(/\s+vs\s+/i)[0] || name;
+    var away = name.split(/\s+vs\s+/i)[1] || '自选';
+    return {
+      mid: 'custom|' + c.id,
+      play: c.play || '胜平负',
+      sel: c.sel || '胜',
+      sp: +c.sp,
+      p: +c.p,
+      ev: (+c.p) * (+c.sp) - 1,
+      match: {
+        no: c.no || ('自' + c.id),
+        league: c.league || '手动录入',
+        home: { short: home },
+        away: { short: away }
+      }
+    };
+  }
+
   function legPool() {
-    /* 每场取模型概率最高的前 2 条腿，按概率降序展示 */
-    return P.legPool(models(), 2).sort(function (a, b) { return b.p - a.p; });
+    /* 每场取模型概率最高的前 2 条腿 + 手动添加的自定义腿，按概率降序展示 */
+    var pool = P.legPool(models(), 2).slice();
+    (state.customLegs || []).forEach(function (c) {
+      if (c && c.sp > 1 && c.p > 0 && c.p < 1) pool.push(customToLeg(c));
+    });
+    return pool.sort(function (a, b) { return b.p - a.p; });
   }
 
   function legKey(l) { return l.mid + '|' + l.play + '|' + l.sel; }
@@ -229,24 +257,27 @@
     } else {
       body = '<div class="card-b flush"><div class="scrollx"><table class="tbl tbl-dense">' +
         '<thead><tr><th></th><th>场次（玩法 · 选择）</th><th class="num">模型概率</th>' +
-        '<th class="num">SP</th><th class="num">期望 EV</th><th class="num">公平赔率</th></tr></thead><tbody>' +
+        '<th class="num">SP</th><th class="num">期望 EV</th><th class="num">公平赔率</th><th></th></tr></thead><tbody>' +
         pool.map(function (l) {
           var on = !!state.picked[legKey(l)];
           var dup = !on && pool.some(function (x) { return state.picked[legKey(x)] && x.mid === l.mid; });
+          var isCustom = /^custom\|/.test(l.mid);
+          var delBtn = isCustom ? '<button class="btn-ghost" data-delleg="' + U.esc(l.mid) + '" title="删除这条手动录入的腿" style="padding:2px 8px;margin-left:6px">删除</button>' : '';
           return '<tr' + (on ? ' style="background:#f2f7ff"' : '') + '>' +
             '<td><input type="checkbox" data-leg="' + U.esc(legKey(l)) + '"' + (on ? ' checked' : '') + (dup ? ' title="同一场已选，取消后才能勾选"' : '') + '></td>' +
             '<td><b>' + U.esc(l.match.no) + '</b> ' + U.esc(l.match.home.short) + ' vs ' + U.esc(l.match.away.short) +
               '<div class="tiny muted">' + U.esc(l.play) + ' · <b style="color:var(--accent)">' + U.esc(l.sel) + '</b>' +
-              ' <span class="muted">@' + U.odds(l.sp) + '</span>' + (l.match.league ? ' · ' + U.esc(l.match.league) : '') + '</div></td>' +
+              ' <span class="muted">@' + U.odds(l.sp) + '</span>' + (l.match.league ? ' · ' + U.esc(l.match.league) : '') + (isCustom ? ' <span class="tag t-brand">手动</span>' : '') + '</div></td>' +
             '<td class="num"><b>' + U.pct(l.p, 1) + '</b></td>' +
             '<td class="num">' + U.odds(l.sp) + '</td>' +
             '<td class="num ' + (l.ev >= 0 ? 'pos' : 'neg') + '">' + U.signed(l.ev, 1) + '</td>' +
             '<td class="num muted">' + U.num(1 / l.p, 2) + '</td>' +
+            '<td>' + delBtn + '</td>' +
             '</tr>';
         }).join('') +
         '</tbody></table></div>' +
         '<div class="card-b" style="border-top:1px solid var(--line)">' +
-          '<div class="toolbar" style="margin:0;border:0;padding:0;background:none;flex-wrap:wrap">' +
+          '<div class="toolbar" style="margin:0;border:0;padding:0;background:none;flex-wrap:wrap;gap:8px">' +
             autoSeg +
             '<span id="pp-ticket-sum" class="small" style="margin-left:12px">' +
             (ticket
@@ -256,13 +287,24 @@
               : '尚未勾选任何腿') +
             '</span>' +
           '</div>' +
+          '<div class="callout mt16" id="pp-manual-box"><h4>手动添加组合腿（本页独立编辑，不依赖接口数据）</h4>' +
+            '<p class="tiny muted mb8">接口没有的场次、或你想自拟的玩法，都可以在这里手动录入：填名称、玩法选择、SP 赔率和模型概率（%），' +
+            '加入后与接口腿完全同权——可勾选串联、可参与倍投/固定投入计划。删除后立即从票面移除。</p>' +
+            '<div class="toolbar" style="margin:0;border:0;padding:0;background:none;flex-wrap:wrap;gap:8px">' +
+              '<input class="cell-input" id="m-name" placeholder="如 曼城 vs 阿森纳" style="width:180px;text-align:left">' +
+              '<input class="cell-input" id="m-play" placeholder="玩法如 让球(-1)" style="width:130px;text-align:left">' +
+              '<input class="cell-input" id="m-sel" placeholder="选择如 胜" style="width:80px;text-align:left">' +
+              '<input class="cell-input" id="m-sp" type="number" step="0.01" min="1.01" placeholder="SP赔率" style="width:90px">' +
+              '<input class="cell-input" id="m-p" type="number" step="0.1" min="0.1" max="99" placeholder="概率%" style="width:80px">' +
+              '<button class="btn-brand" data-addleg>＋ 添加腿</button>' +
+            '</div></div>' +
           '<div class="tiny muted mt8">自动选号 = 按模型概率从高到低挑腿（同一场只取一条）；勾选框可手动增加 / 取消，同一场比赛不可重复串联。' +
           '选定后，当期赔率与投入将按此票面自动加载。</div>' +
         '</div>' +
         '</div>';
     }
     return '<div class="card mt16"><div class="card-h"><h3>串关组合清单</h3>' +
-      '<span class="tiny muted">勾选腿 → 组成当期串关票面 → 下方资金计划自动跟随</span></div>' + body + '</div>';
+      '<span class="tiny muted">勾选腿 → 组成当期串关票面 → 下方资金计划自动跟随；也可手动录入腿</span></div>' + body + '</div>';
   }
 
   /* --------------------------------------------------------- 倍投计划表 v2 */
@@ -504,6 +546,36 @@
       }
       state.curOdds = state.curStake = null;
       save(); renderParlay();
+    });
+    U.on(document, 'click', '[data-addleg]', function () {
+      var name = (U.byId('m-name') || {}).value || '';
+      var play = (U.byId('m-play') || {}).value || '胜平负';
+      var sel = (U.byId('m-sel') || {}).value || '胜';
+      var sp = +((U.byId('m-sp') || {}).value || 0);
+      var pp = +((U.byId('m-p') || {}).value || 0);
+      if (!name.trim()) { note('请填写场次名称'); return; }
+      if (!(sp > 1)) { note('SP 赔率必须大于 1'); return; }
+      if (!(pp > 0 && pp < 100)) { note('模型概率需在 0~100 之间'); return; }
+      var id = 'L' + Date.now().toString(36);
+      state.customLegs.push({
+        id: id, no: '自' + (state.customLegs.length + 1),
+        name: name.trim(), play: play.trim(), sel: sel.trim(),
+        sp: sp, p: pp / 100, league: '手动录入'
+      });
+      state.picked[('custom|' + id) + '|' + play.trim() + '|' + sel.trim()] = 1;
+      state.curOdds = state.curStake = null;
+      save(); renderParlay();
+      note('已添加并自动勾选手动腿：' + name.trim() + ' ' + sel.trim() + '@' + U.odds(sp));
+    });
+    U.on(document, 'click', '[data-delleg]', function (e, t) {
+      var mid = t.dataset.delleg;   // custom|Lxxx
+      var id = mid.split('|')[1];
+      state.customLegs = (state.customLegs || []).filter(function (c) { return c.id !== id; });
+      /* 同步清掉该腿的勾选 */
+      Object.keys(state.picked).forEach(function (k) { if (k.indexOf(mid + '|') === 0) delete state.picked[k]; });
+      state.curOdds = state.curStake = null;
+      save(); renderParlay();
+      note('已删除手动腿');
     });
     U.on(document, 'click', '[data-lock]', function () {
       var t = ticketOf(legPool());
