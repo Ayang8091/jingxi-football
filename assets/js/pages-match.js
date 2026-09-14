@@ -7,12 +7,26 @@
   var D = global.JX_DATA, U = global.JX.U, C = global.JX.C, M = global.JX.M;
   var evalPick = global.JX.evalPick, mg = global.JX.mg;
 
+  /* 数据覆盖：演示快照含全部字段；接入官方接口后仅含赛程与赔率 */
+  function cov(m) {
+    return m.coverage || { xg: true, form: true, injury: true, h2h: true, asian: true, euroTrend: true, odds: true, rq: true, ttg: true };
+  }
+  function na(text) { return '<span class="na">' + U.esc(text || '该数据源未提供') + '</span>'; }
+  function unavail(title, items) {
+    return '<div class="callout c-warn"><h4>' + U.esc(title) + '</h4>' +
+      '<p class="small mb0">当前数据源（中国体彩网公开接口）只提供赛程与赔率，不包含以下字段，因此本模块自动降级：</p>' +
+      '<ul class="small mb0">' + items.map(function (x) { return '<li>' + x + '</li>'; }).join('') + '</ul></div>';
+  }
+
   function renderMatch() {
     var id = U.qs('id');
-    var m = D.matches.filter(function (x) { return x.id === id; })[0] || D.matches[0];
+    var m = D.matches.filter(function (x) { return x.id === id; })[0] ||
+      D.matches.filter(function (x) { return x.day === 'today' && x.sp; })[0] || D.matches[0];
+    if (!m) { U.byId('match-body').innerHTML = '<div class="wrap" style="padding:40px 20px"><div class="callout c-warn"><h4>暂无可分析的赛事</h4><p class="small mb0">请点顶部「数据更新」拉取最新赛程。</p></div></div>'; return; }
     var r = global.JX.model(m);
     var mk = r.sp;
     var host = U.byId('match-body');
+    var c = cov(m);
 
     /* --- 头部对阵 --- */
     var head = '<div class="pagehead"><div class="wrap">' +
@@ -20,10 +34,12 @@
       '<div class="row between wrapx" style="align-items:flex-end">' +
         '<div>' +
           '<h1 style="font-size:26px">' + U.esc(m.home.name) + ' <span class="muted" style="font-weight:400;font-size:18px">vs</span> ' + U.esc(m.away.name) + '</h1>' +
-          '<div class="sub">' + U.esc(m.league) + ' · ' + U.esc(m.no) + ' · ' + U.esc(m.vtime) + ' · ' + U.esc(m.venue) + ' · 竞彩停售：开赛前 15 分钟</div>' +
+          '<div class="sub">' + U.esc(m.leagueFull || m.league) + ' · ' + U.esc(m.no) + ' · ' +
+            U.esc(m.kickoffFull || m.vtime || m.kickoff || '') +
+            (m.venue ? ' · ' + U.esc(m.venue) : '') + ' · 竞彩停售：开赛前 15 分钟</div>' +
         '</div>' +
         '<div class="right">' +
-          '<div class="row gap8" style="justify-content:flex-end">' + m.tags.map(function (t) { return '<span class="tag t-brand">' + U.esc(t) + '</span>'; }).join('') + '</div>' +
+          '<div class="row gap8" style="justify-content:flex-end">' + (m.tags || []).map(function (t) { return '<span class="tag t-brand">' + U.esc(t) + '</span>'; }).join('') + '</div>' +
           '<div class="row gap8 mt8" style="justify-content:flex-end"><span class="tiny muted">信心指数</span>' + C.stars(m.conf) + '</div>' +
         '</div>' +
       '</div>' +
@@ -67,12 +83,12 @@
         '<div class="callout mt16"><h4>一句话判断</h4><p class="mb0">' + U.esc(m.summary) + '</p></div>' +
       '</div></div>';
 
-    /* --- 8 个分析区块 --- */
+    /* --- 8 个分析区块（按数据覆盖情况切换内容） --- */
     var blocks =
-      blockBasic(m, r) +
-      blockH2H(m) +
-      blockInjury(m) +
-      blockOdds(m, r) +
+      (c.xg || c.form ? blockBasic(m, r) : blockCoverage(m, r)) +
+      (c.h2h ? blockH2H(m) : blockPricing(m, r)) +
+      (c.injury ? blockInjury(m) : blockLimits(m)) +
+      (c.asian ? blockOdds(m, r) : blockPoolOdds(m, r)) +
       blockGoals(m, r) +
       blockScore(m, r) +
       blockStake(m, picks) +
@@ -129,6 +145,195 @@
       '</div>' +
       '<div class="row between small mb8"><span class="muted">' + U.esc(title) + '</span>' + C.form(rec) + '</div>' +
       '<div class="row between small"><span class="muted">核心球员</span><b>' + U.esc(t.star) + '</b></div>';
+  }
+
+  /* ---- 实时数据模式：01 数据覆盖与模型输入 ---- */
+  function blockCoverage(m, r) {
+    var c = cov(m);
+    var rows = [
+      ['赛事与联赛', m.leagueFull || m.league, true],
+      ['开赛时间', m.kickoffFull || m.kickoff || '—', true],
+      ['球队名称', m.home.name + ' / ' + m.away.name, true],
+      ['胜平负 SP', m.sp ? m.sp.w + ' / ' + m.sp.d + ' / ' + m.sp.l : '—', !!m.sp],
+      ['让球盘 SP', c.rq ? (m.rq.label + ' · ' + m.rq.w + ' / ' + m.rq.d + ' / ' + m.rq.l) : '—', c.rq],
+      ['总进球 SP', c.ttg ? '0 ~ 7+ 共 8 档' : '—', c.ttg],
+      ['比分 SP', c.crs ? '已提供' : '—', c.crs],
+      ['半全场 SP', c.hafu ? '已提供' : '—', c.hafu],
+      ['球队级 xG / xGA', '未提供', false],
+      ['伤停 / 停赛 / 阵容', '未提供', false],
+      ['历史交锋', '未提供', false],
+      ['亚洲盘水位与成交量', '未提供', false]
+    ];
+    return section('basic', '01 · 数据覆盖与模型输入',
+      '<div class="mini-grid mb16">' +
+        mg('反解 λ（主）', U.num(m.lam[0], 3)) +
+        mg('反解 λ（客）', U.num(m.lam[1], 3)) +
+        mg('期望总进球', U.num(m.lam[0] + m.lam[1], 2)) +
+        mg('模型概率和', U.pct(r.w + r.d + r.l, 4)) +
+      '</div>' +
+      '<div class="scrollx"><table class="tbl tbl-dense"><thead><tr><th>数据项</th><th>本场取值</th><th>状态</th></tr></thead><tbody>' +
+        rows.map(function (x) {
+          return '<tr><td>' + U.esc(x[0]) + '</td><td class="small">' + U.esc(String(x[1])) + '</td>' +
+            '<td>' + (x[2] ? '<span class="tag t-win">可用</span>' : na('未提供')) + '</td></tr>';
+        }).join('') +
+      '</tbody></table></div>' +
+      '<div class="callout c-gold mt16"><h4>λ 是怎么来的</h4>' +
+        '<p class="mb0">本数据源不含球队基本面，因此 λ 由<b>官方赔率反解</b>得到：把胜平负、让球、总进球三个盘口去水后的隐含概率作为观测目标，' +
+        '用最小二乘拟合出令模型概率最贴合市场的 λ 组合。本场拟合结果为 λ主 = <b>' + U.num(m.lam[0], 3) +
+        '</b>、λ客 = <b>' + U.num(m.lam[1], 3) + '</b>。' +
+        '这意味着模型概率与市场高度一致——它是市场的复述，不是独立预测。这一点在下面的定价对照里会看得更清楚。</p></div>'
+    );
+  }
+
+  /* ---- 实时数据模式：02 各玩法赔率与模型定价对照 ---- */
+  function blockPricing(m, r) {
+    var DSx = global.JX.DS;
+    var rows = [];
+    function push(play, label, sp, p, mktP) {
+      if (!isFinite(sp) || sp <= 1) return;
+      var ev = p * sp - 1;
+      rows.push({ play: play, label: label, sp: sp, p: p, mkt: mktP, ev: ev, edge: mktP === null ? null : p - mktP });
+    }
+    if (m.sp) {
+      var v1 = DSx ? DSx.devig3(m.sp.w, m.sp.d, m.sp.l) : null;
+      push('胜平负', '主胜', m.sp.w, r.w, v1 ? v1.p[0] : null);
+      push('胜平负', '平局', m.sp.d, r.d, v1 ? v1.p[1] : null);
+      push('胜平负', '客胜', m.sp.l, r.l, v1 ? v1.p[2] : null);
+    }
+    if (m.rq && cov(m).rq) {
+      var v2 = DSx ? DSx.devig3(m.rq.w, m.rq.d, m.rq.l) : null;
+      push('让球', '让胜 ' + (m.rq.line > 0 ? '+' : '') + m.rq.line, m.rq.w, r.rq.w, v2 ? v2.p[0] : null);
+      push('让球', '让平', m.rq.d, r.rq.d, v2 ? v2.p[1] : null);
+      push('让球', '让负', m.rq.l, r.rq.l, v2 ? v2.p[2] : null);
+    }
+    var raw = m._raw || {};
+    var ttg = raw.ttg || {}, vals = [], idx = [];
+    for (var i = 0; i <= 7; i++) {
+      var o = ttg['s' + i];
+      if (o !== undefined && o !== null && o !== '' && +o > 1) { vals.push(+o); idx.push(i); }
+    }
+    if (vals.length >= 6) {
+      var v3 = DSx ? DSx.devigN(vals) : null;
+      for (var k = 0; k < idx.length; k++) {
+        push('总进球', (idx[k] === 7 ? '7+ 球' : idx[k] + ' 球'), vals[k], M.bucket(r, idx[k]), v3 ? v3.p[k] : null);
+      }
+    }
+    if (!rows.length) return section('h2h', '02 · 各玩法赔率与模型定价对照', '<p class="small muted mb0">本场暂无可用赔率数据。</p>');
+
+    var valN = rows.filter(function (x) { return x.ev > 0.02; }).length;
+    var margins = rows.filter(function (x) { return x.mkt !== null; });
+    var avgMargin = margins.length ? margins.reduce(function (s, x) { return s + x.mkt; }, 0) / margins.length : 0;
+
+    return section('h2h', '02 · 各玩法赔率与模型定价对照',
+      '<div class="scrollx"><table class="tbl tbl-dense"><thead><tr>' +
+        '<th>玩法</th><th>选择</th><th class="num">竞彩 SP</th><th class="num">模型概率</th>' +
+        '<th class="num">市场隐含</th><th class="num">边际</th><th class="num">价值 EV</th></tr></thead><tbody>' +
+        rows.map(function (x) {
+          return '<tr><td><span class="tag">' + U.esc(x.play) + '</span></td><td><b>' + U.esc(x.label) + '</b></td>' +
+            '<td class="num">' + U.odds(x.sp) + '</td>' +
+            '<td class="num">' + U.pct(x.p, 2) + '</td>' +
+            '<td class="num muted">' + (x.mkt === null ? '—' : U.pct(x.mkt, 2)) + '</td>' +
+            '<td class="num ' + (x.edge > 0 ? 'pos' : (x.edge < 0 ? 'neg' : '')) + '">' + (x.edge === null ? '—' : U.signed(x.edge, 2)) + '</td>' +
+            '<td class="num ' + (x.ev > 0 ? 'pos' : 'neg') + '"><b>' + U.signed(x.ev, 1) + '</b></td></tr>';
+        }).join('') +
+      '</tbody></table></div>' +
+      '<div class="mini-grid mt16">' +
+        mg('可分析选项', rows.length + ' 个') +
+        mg('满足 EV 阈值', valN + ' 个') +
+        mg('模型概率均值', U.pct(rows.reduce(function (s, x) { return s + x.p; }, 0) / rows.length, 2)) +
+        mg('市场隐含均值', U.pct(avgMargin, 2)) +
+      '</div>' +
+      '<div class="callout ' + (valN ? 'c-win' : 'c-warn') + ' mt16"><h4>' + (valN ? '存在边际为正的方向' : '没有方向能跨过水位线') + '</h4>' +
+        '<p class="small mb0">' + (valN
+          ? '共 ' + valN + ' 个选项的模型概率高于市场隐含概率超过 2 个百分点，已进入推荐池。注意：由于 λ 由赔率反解，这类边际通常来自盘口之间的定价不一致，而非模型对比赛本身的独立判断。'
+          : '模型概率与市场隐含概率的平均差异仅 ' + U.pct(Math.abs(avgMargin - 0.5), 2) +
+            '，全部方向的 EV 都为负。这正是"用市场反解模型"的必然结果：模型与市场说的是同一件事，' +
+            '差额只剩官方水位。如实呈现这个结果，比编造一个正期望的推荐更有价值。') +
+        '</p></div>' +
+      '<div class="callout mt16"><h4>为什么先看边际，再看 EV</h4>' +
+        '<p class="small mb0">边际（边际 = 模型概率 − 市场隐含概率）衡量的是模型与市场的分歧大小；' +
+        'EV = 模型概率 × SP − 1 才是真实的期望回报。二者可能方向相反——因为各玩法的水位不同，' +
+        '边际为正不代表 EV 为正。只有 EV 才决定长期盈亏。</p></div>'
+    );
+  }
+
+  /* ---- 实时数据模式：03 数据源能力边界 ---- */
+  function blockLimits(m) {
+    return section('inj', '03 · 数据源能力边界',
+      unavail('本数据源不提供以下字段', [
+        '<b>球队级 xG / xGA</b>：无法计算攻防效率，λ 只能由赔率反解',
+        '<b>伤停、停赛与预计阵容</b>：无法量化主力缺阵对 λ 的衰减',
+        '<b>历史交锋（H2H）</b>：无法做风格压制类判断',
+        '<b>亚洲盘水位、欧赔初盘与成交量</b>：无法做资金异动与降赔分析'
+      ]) +
+      '<div class="grid-2 mt16">' +
+        '<div class="callout c-warn"><h4>这带来什么后果</h4>' +
+          '<p class="small mb0">模型概率 ≈ 市场隐含概率，<b>不具备独立于市场的预测优势</b>。' +
+          '在官方水位约 13% 的竞彩盘口上，这意味着任何单一方向的长期期望都是负的——' +
+          '不是模型不够好，而是信息不占优时，数学上不存在免费的优势。</p></div>' +
+        '<div class="callout c-gold"><h4>要获得真实优势需要什么</h4>' +
+          '<p class="small mb0">需要接入<b>球队级付费数据源</b>：逐场 xG、阵容与伤停、赛程密度、' +
+          '以及独立于竞彩的欧赔/亚盘历史。<b>演示数据模式</b>下的这套页面正是用来验证"方法能跑通"的——' +
+          '接入基本面数据后，同一套引擎即可输出真实的正期望方向。</p></div>' +
+      '</div>' +
+      '<div class="callout mt16"><h4>当前这一页仍然有用的地方</h4>' +
+        '<p class="small mb0">虽然无法给出价值推荐，但基于真实 λ 推导出的<b>比分概率矩阵、总进球分布、' +
+        '让球盘概率</b>都是真实可用的结构信息——它们可以用于判断"某个比分或某个进球数的概率到底有多大"，' +
+        '也可以作为串关组合的概率输入（见<a href="parlay.html">串关搭配</a>栏目）。</p></div>'
+    );
+  }
+
+  /* ---- 实时数据模式：04 让球盘与总进球盘明细 ---- */
+  function blockPoolOdds(m, r) {
+    var DSx = global.JX.DS;
+    var out = '<div class="small" style="font-weight:700;margin-bottom:8px">让球胜平负（官方 SP）</div>';
+
+    if (cov(m).rq && m.rq) {
+      var v2 = DSx ? DSx.devig3(m.rq.w, m.rq.d, m.rq.l) : null;
+      var q = r.rq;
+      var rr = [['让胜', m.rq.w, q.w, v2 ? v2.p[0] : null], ['让平', m.rq.d, q.d, v2 ? v2.p[1] : null], ['让负', m.rq.l, q.l, v2 ? v2.p[2] : null]];
+      out += '<div class="scrollx"><table class="tbl tbl-dense"><thead><tr>' +
+        '<th>选择</th><th class="num">SP</th><th class="num">模型概率</th><th class="num">市场隐含</th><th class="num">EV</th></tr></thead><tbody>' +
+        rr.map(function (x) {
+          var ev = x[2] * x[1] - 1;
+          return '<tr><td><b>' + x[0] + '</b></td><td class="num">' + U.odds(x[1]) + '</td>' +
+            '<td class="num">' + U.pct(x[2], 2) + '</td><td class="num muted">' + (x[3] === null ? '—' : U.pct(x[3], 2)) + '</td>' +
+            '<td class="num ' + (ev > 0 ? 'pos' : 'neg') + '"><b>' + U.signed(ev, 1) + '</b></td></tr>';
+        }).join('') +
+        '</tbody></table></div>' +
+        '<p class="small muted mt8">让球线：<b>' + U.esc(m.rq.label) + '</b>。' +
+        '竞彩让球盘的让球数为官方设定，模型按净胜球分布换算为让胜 / 让平 / 让负三档概率。</p>';
+    } else {
+      out += '<p class="small muted">' + na('本场未开售让球盘') + '</p>';
+    }
+
+    var raw = m._raw || {}, ttg = raw.ttg || {}, vals = [], idx = [];
+    for (var i = 0; i <= 7; i++) {
+      var o = ttg['s' + i];
+      if (o !== undefined && o !== null && o !== '' && +o > 1) { vals.push(+o); idx.push(i); }
+    }
+    if (vals.length >= 6) {
+      var v3 = DSx ? DSx.devigN(vals) : null;
+      out += '<div class="small mt24 mb8" style="font-weight:700">总进球（官方 SP）</div>' +
+        '<div class="scrollx"><table class="tbl tbl-dense"><thead><tr>' +
+        '<th>进球数</th><th class="num">SP</th><th class="num">模型概率</th><th class="num">市场隐含</th><th class="num">EV</th></tr></thead><tbody>' +
+        idx.map(function (n, k) {
+          var p = M.bucket(r, n), ev = p * vals[k] - 1;
+          return '<tr><td><b>' + (n === 7 ? '7+' : n) + ' 球</b></td><td class="num">' + U.odds(vals[k]) + '</td>' +
+            '<td class="num">' + U.pct(p, 2) + '</td><td class="num muted">' + (v3 ? U.pct(v3.p[k], 2) : '—') + '</td>' +
+            '<td class="num ' + (ev > 0 ? 'pos' : 'neg') + '"><b>' + U.signed(ev, 1) + '</b></td></tr>';
+        }).join('') +
+        '</tbody></table></div>' +
+        '<p class="small muted mt8">竞彩总进球玩法为「猜进球总数」（0 ~ 7+），单档概率通常在 20%~27%，方差显著高于胜平负。</p>';
+    }
+
+    return section('odds', '04 · 让球盘与总进球盘明细',
+      out +
+      '<div class="callout c-gold mt16"><h4>这一块是真实的官方赔率</h4>' +
+        '<p class="small mb0">与演示模式不同，这里的 SP 是接口实时返回的官方在售赔率，' +
+        '「市场隐含」列是把该玩法的赔率去水（剔除本金与水位）后还原的真实概率。' +
+        '把「模型概率」与「市场隐含」并列，就能看出模型在哪一档上与市场存在分歧。</p></div>'
+    );
   }
 
   /* 2. 交锋历史 */
@@ -233,7 +438,22 @@
     var items = bk.map(function (p, i) {
       return { label: i >= 7 ? '7+' : String(i), value: +(p * 100).toFixed(1), color: i === best ? '#c8952c' : '#123a6b' };
     });
-    var ou = M.overUnder(r, m.ou.line);
+    var ouBlock = '';
+    if (m.ou && isFinite(m.ou.line)) {
+      var ou = M.overUnder(r, m.ou.line);
+      ouBlock = '<div class="callout c-gold mt16 small"><b>亚盘大小球（市场参考，非竞彩玩法）：</b>' +
+        '当前盘口 ' + m.ou.line + ' 球 · 大 ' + U.odds(m.ou.over) + ' / 小 ' + U.odds(m.ou.under) + '（' + U.esc(m.ou.move) + '）。' +
+        '模型计算大球概率 <b>' + U.pct(ou.over, 1) + '</b>、走盘 ' + U.pct(ou.push, 1) + '、小球 ' + U.pct(ou.under, 1) + '。' +
+        (m.ou.dir === 'up' ? '盘口水位向大球方向移动，与模型的进球预期一致。' :
+          m.ou.dir === 'down' ? '水位向小球方向移动，与模型的进球预期存在分歧，属需要留意的信号。' :
+            '盘口静止，模型与市场无明显分歧。') +
+        '　这一数据用于交叉验证模型的进球预期是否偏离市场，本身不作为竞彩推荐项。</div>';
+    } else {
+      ouBlock = '<div class="callout mt16 small"><b>亚盘大小球：</b>' + na('本数据源不提供大小球盘口与水位') +
+        '　模型的大球 / 小球概率可由左侧总进球分布直接累加得到（例如「大 2.5 球」= 3 球及以上各档之和），' +
+        '只是缺少市场赔率无法做价值对比。</div>';
+    }
+
     return section('goals', '05 · 总进球数分布（竞彩总进球玩法）',
       '<div class="grid-2">' +
         '<div>' + C.bars(items, { h: 200, fmtY: function (v) { return v.toFixed(0) + '%'; }, fmtV: function (v) { return v + '%'; } }) +
@@ -260,43 +480,57 @@
         bk.map(function (p) { return '<td class="num muted">' + U.num(M.fairOdds(p), 1) + '</td>'; }).join('') +
       '</tr></tbody></table></div>' +
 
-      '<div class="callout c-gold mt16 small"><b>亚盘大小球（市场参考，非竞彩玩法）：</b>' +
-        '当前盘口 ' + m.ou.line + ' 球 · 大 ' + U.odds(m.ou.over) + ' / 小 ' + U.odds(m.ou.under) + '（' + U.esc(m.ou.move) + '）。' +
-        '模型计算大球概率 <b>' + U.pct(ou.over, 1) + '</b>、走盘 ' + U.pct(ou.push, 1) + '、小球 ' + U.pct(ou.under, 1) + '。' +
-        (m.ou.dir === 'up' ? '盘口水位向大球方向移动，与模型的进球预期一致。' :
-         m.ou.dir === 'down' ? '水位向小球方向移动，与模型的进球预期存在分歧，属需要留意的信号。' :
-         '盘口静止，模型与市场无明显分歧。') +
-        '　这一数据用于交叉验证模型的进球预期是否偏离市场，本身不作为竞彩推荐项。</div>' +
+      '<div class="callout c-gold mt16 small"><b>亚盘大小球（市场参考，非竞彩玩法）：</b>' + ouBlock +
       '<div class="callout mt16 small"><b>为什么本站的主推方向偏向胜平负与总进球：</b>' +
         '这两个玩法的概率分布最稳定，单个 λ 的估计误差对其影响最小。比分与半全场是方差最大的玩法，' +
-        '即使模型完全正确，单注命中也属小概率事件——本站近 30 日比分玩法 12 注仅中 3 注，已如实公示。</div>'
+        '即使模型完全正确，单注命中也属小概率事件——本站已如实公示各玩法的历史回报。</div>'
     );
   }
 
   /* 6. 比分概率矩阵 */
   function blockScore(m, r) {
     var top = r.scores.slice(0, 6);
+    /* 若接口提供了官方比分赔率，直接对照真实 SP；否则按返奖率推算参考值 */
+    var crsOdds = {};
+    var rawCrs = (m._raw && m._raw.crs) || {};
+    Object.keys(rawCrs).forEach(function (k) {
+      var mm = /^s(\d+)s(\d+)$/.exec(k);
+      if (mm) {
+        var v = rawCrs[k];
+        if (v !== undefined && v !== null && v !== '' && +v > 1) {
+          crsOdds[(+mm[1]) + ':' + (+mm[2])] = +v;
+        }
+      }
+    });
+    var hasCrs = Object.keys(crsOdds).length > 0;
+
     return section('score', '06 · 比分概率矩阵（DC 修正泊松）',
       '<div class="grid-2">' +
         '<div>' + C.heat(r, { n: 5 }) + '</div>' +
         '<div>' +
           '<div class="small" style="font-weight:700;margin-bottom:8px">概率最高的比分</div>' +
-          '<table class="tbl tbl-dense"><thead><tr><th>比分</th><th class="num">模型概率</th><th class="num">公平赔率</th><th class="num">竞彩参考 SP</th></tr></thead><tbody>' +
+          '<table class="tbl tbl-dense"><thead><tr><th>比分</th><th class="num">模型概率</th><th class="num">公平赔率</th>' +
+          '<th class="num">' + (hasCrs ? '官方 SP' : '参考 SP') + '</th><th class="num">EV</th></tr></thead><tbody>' +
             top.map(function (s) {
-              /* 竞彩比分玩法返奖率约 80%：参考 SP = 公平赔率 × 0.80 */
+              var sp = hasCrs ? crsOdds[s.s] : M.fairOdds(s.p) * 0.80;
+              var ev = sp ? s.p * sp - 1 : null;
               return '<tr><td><b class="num">' + s.s + '</b></td><td class="num">' + U.pct(s.p, 2) + '</td>' +
                 '<td class="num muted">' + U.num(M.fairOdds(s.p), 1) + '</td>' +
-                '<td class="num muted">' + U.num(M.fairOdds(s.p) * 0.80, 1) + '</td></tr>';
+                '<td class="num">' + (sp ? U.odds(sp) : na('未开售')) + '</td>' +
+                '<td class="num ' + (ev === null ? '' : (ev > 0 ? 'pos' : 'neg')) + '">' + (ev === null ? '—' : U.signed(ev, 1)) + '</td></tr>';
             }).join('') +
           '</tbody></table>' +
-          '<p class="tiny muted mt8">「竞彩参考 SP」按竞彩比分玩法约 80% 的返奖率由公平赔率推算，仅用于说明该玩法的定价水平；' +
-          '实际 SP 以官方开售数据为准。</p>' +
+          '<p class="tiny muted mt8">' + (hasCrs
+            ? '「官方 SP」为接口实时返回的竞彩比分玩法赔率。'
+            : '「参考 SP」按竞彩比分玩法约 80% 的返奖率由公平赔率推算，仅用于说明该玩法的定价水平。') +
+          'EV = 模型概率 × SP − 1，是判断该比分是否值得参与的唯一口径。</p>' +
           '<div class="callout mt16 small"><h4>矩阵怎么来的</h4>' +
             '<p class="mb0">在没有 Dixon-Coles 修正的独立泊松下，低比分（如 0:0、1:0、1:1）的概率会被系统性低估约 3–6%。本页矩阵已应用 τ 修正，ρ = −0.062。' +
             '修正后各格概率之和严格等于 1。</p></div>' +
           '<div class="callout c-warn small mt16"><h4>比分玩法为什么很少推荐</h4>' +
-            '<p class="mb0">比分是方差最大的玩法。即使模型完全正确，单注比分仍是小概率事件——本站近 30 日比分玩法 12 注仅中 3 注、回报 −18.4%，已如实公示。' +
-            '我们不通过推荐比分来制造"命中感"。</p></div>' +
+            '<p class="mb0">比分是方差最大的玩法：单档概率通常只有 8%~13%，即使模型完全正确，单注命中也属小概率事件。' +
+            '而竞彩比分玩法的返奖率低于胜平负，长期回报更难为正。本站不通过推荐比分来制造"命中感"——' +
+            '需要看历史表现请前往<a href="records.html">战绩公示</a>。</p></div>' +
         '</div>' +
       '</div>'
     );
@@ -304,6 +538,18 @@
 
   /* 7. 推荐与仓位 */
   function blockStake(m, picks) {
+    if (!picks.length) {
+      return section('stake', '07 · 推荐明细与仓位建议',
+        '<div class="callout c-warn"><h4>本场无推荐——这是模型给出的结论，不是遗漏</h4>' +
+          '<p class="small mb0">所有可分析方向（胜平负 / 让球 / 总进球）的期望值都未达到价值阈值 ' +
+          U.pct(D.model.params.evThreshold, 0) + '，因此不给任何方向分配仓位。<br>' +
+          '在实时数据模式下这一点尤其常见：模型由官方赔率反解，与市场高度一致，' +
+          '扣除约 13% 的官方水位后，所有方向的期望都是负的。<b>把资金留在场外，是唯一数学上正确的选择。</b></p></div>' +
+        '<div class="callout mt16 small"><h4>想看结构参考？</h4>' +
+          '<p class="mb0">本场的概率结构（比分矩阵、总进球分布、让球盘概率）依然真实可用，' +
+          '可以作为<a href="parlay.html">串关搭配</a>栏目的组合输入——但那属于"结构参考"，不是价值推荐。</p></div>'
+      );
+    }
     var rows = picks.map(function (x) {
       var p = x.p, e = x.e;
       return '<tr>' +

@@ -31,6 +31,20 @@
     },
     byId: function (id) { return document.getElementById(id); },
     el: function (sel) { return document.querySelector(sel); },
+    all: function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); },
+    /* 别名：页面层使用 $ / $$ 简写，此处统一补齐（此前缺失导致筛选按钮点击即抛错） */
+    elAll: function (sel, root) { return this.all(sel, root); },
+    '$': function (sel, root) { return (root || document).querySelector(sel); },
+    '$$': function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); },
+    /* 数组辅助（串关页组合去重、统计常用） */
+    uniq: function (arr) {
+      var seen = {}, out = [];
+      (arr || []).forEach(function (v) { var k = 'k' + v; if (!seen[k]) { seen[k] = 1; out.push(v); } });
+      return out;
+    },
+    sum: function (arr) { return (arr || []).reduce(function (a, b) { return a + (Number(b) || 0); }, 0); },
+    mean: function (arr) { return arr && arr.length ? this.sum(arr) / arr.length : 0; },
+    clamp: function (v, lo, hi) { return Math.max(lo, Math.min(hi, v)); },
     on: function (root, evt, sel, fn) {
       (root || document).addEventListener(evt, function (e) {
         var t = e.target.closest(sel);
@@ -196,6 +210,8 @@
 
   /* 取得某场比赛的模型输出（带缓存） */
   var _cache = {};
+  /* 数据源切换（演示 ⇄ 实时）后必须清空，否则会命中旧 λ 的缓存 */
+  JX.clearModelCache = function () { _cache = {}; };
   JX.model = function (m) {
     if (!_cache[m.id]) {
       _cache[m.id] = M.derive(m.lam[0], m.lam[1]);

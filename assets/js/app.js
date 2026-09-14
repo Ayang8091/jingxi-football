@@ -11,29 +11,45 @@
   var NAV = [
     { href: 'index.html', label: '今日预测', key: 'home' },
     { href: 'match.html', label: '单场剖析', key: 'match' },
+    { href: 'parlay.html', label: '串关搭配', key: 'parlay' },
     { href: 'model.html', label: '模型与方法', key: 'model' },
     { href: 'records.html', label: '战绩公示', key: 'records' },
     { href: 'dashboard.html', label: '数据看板', key: 'dash' },
     { href: 'compliance.html', label: '合规与数据源', key: 'law' }
   ];
 
+  /* 数据状态条上的临时提示（重新渲染时保留） */
+  var lastMsg = { text: '', cls: '' };
+
   /* ======================================================================
-     布局：导航 / 页脚（全站唯一来源，改一处全站生效）
+     布局：导航 / 数据状态条 / 页脚（全站唯一来源）
      ====================================================================== */
   function layout(active) {
-    var u = D.meta.updatedAt;
+    /* 幂等：数据更新后重渲染页面时不再重复注入外壳 */
+    if (document.body.getAttribute('data-shell') === '1') return;
+    document.body.setAttribute('data-shell', '1');
+
     var h =
-      '<div class="demobar"><div class="wrap">当前为<b>产品演示站点</b>：赛事、赔率与战绩均为演示样本数据（DEMO），用于验证产品结构、模型计算逻辑与交互流程。' +
-      '接入官方数据源后按同一套渲染逻辑自动生效。<b>本站不销售彩票、不提供投注、不接受任何资金。</b></div></div>' +
+      '<div class="statusbar" id="jx-statusbar"><div class="wrap sb-in">' +
+        '<div class="sb-left">' +
+          '<span class="sb-dot"></span>' +
+          '<span class="sb-txt" id="sb-txt">正在连接数据接口…</span>' +
+          '<span class="sb-meta" id="sb-meta"></span>' +
+          '<span class="sb-msg" id="sb-msg"></span>' +
+        '</div>' +
+        '<div class="sb-right">' +
+          '<button class="btn-refresh" id="jx-refresh" type="button">↻ 数据更新</button>' +
+          '<a class="sb-link" href="compliance.html#data">数据来源</a>' +
+        '</div>' +
+      '</div></div>' +
       '<header class="topbar"><div class="wrap topbar-in">' +
         '<div class="topbar-top">' +
           '<a class="brand" href="index.html" style="text-decoration:none;color:inherit">' +
             '<span class="brand-mark">析</span>' +
-            '<span class="brand-txt"><strong>竞析 JINGXI</strong><span>中国竞彩足球数据分析中心 · ' + D.meta.season + '</span></span>' +
+            '<span class="brand-txt"><strong>竞析 JINGXI</strong><span>中国竞彩足球数据分析中心</span></span>' +
           '</a>' +
           '<div class="topbar-meta">' +
-            '<span class="pill-live hide-sm"><i class="dot-live"></i>数据更新 ' + U.esc(u) + '</span>' +
-            '<span class="pill-live pill-demo">DEMO 演示数据</span>' +
+            '<span class="pill-live" id="pill-mode">数据加载中</span>' +
             '<span class="hide-sm">模型 ' + U.esc(D.model.name) + '</span>' +
           '</div>' +
         '</div>' +
@@ -55,6 +71,7 @@
           '<div><h4>内容</h4><ul>' +
             '<li><a href="index.html">今日赛事预测</a></li>' +
             '<li><a href="match.html">单场深度剖析</a></li>' +
+            '<li><a href="parlay.html">串关搭配与倍投计划</a></li>' +
             '<li><a href="records.html">战绩公示与复盘</a></li>' +
             '<li><a href="dashboard.html">数据看板</a></li>' +
           '</ul></div>' +
@@ -74,14 +91,74 @@
           '</div>' +
         '</div>' +
         '<div class="foot-note">' +
-          '© 2026 竞析 JINGXI（演示站点）。本页所有赛事、赔率、战绩数据均为演示样本，非真实开售信息，不可用于实际投注决策。' +
+          '© 2026 竞析 JINGXI。数据来自中国体育彩票公开发布信息，页面加载时自动获取，可通过顶部「数据更新」立即重新拉取。' +
           '模型输出的概率是长期统计意义上的期望，不代表单场结果。历史表现不代表未来收益。' +
-          '<br>监管提示：中国体育彩票竞彩足球由国家体育总局体育彩票管理中心统一管理，请在具备合法资质的彩票销售网点购买。' +
+          '<br>监管提示：中国体育彩票竞彩足球由国家体育总局体育彩票管理中心统一管理，请在具备合法资质的彩票销售网点购买。未满 18 周岁禁止购彩。' +
         '</div>' +
       '</div></footer>';
 
     document.body.insertAdjacentHTML('afterbegin', h);
     document.body.insertAdjacentHTML('beforeend', f);
+
+    /* 绑定「数据更新」按钮 */
+    var btn = U.byId('jx-refresh');
+    if (btn) btn.addEventListener('click', onRefresh);
+    renderStatus();
+  }
+
+  /* -------------------------------------------------- 数据状态条渲染 / 更新 */
+  function msg(text, cls) { lastMsg = { text: text || '', cls: cls || '' }; paintMsg(); }
+  function paintMsg() {
+    var el = U.byId('sb-msg');
+    if (el) { el.textContent = lastMsg.text; el.className = 'sb-msg' + (lastMsg.cls ? ' ' + lastMsg.cls : ''); }
+  }
+
+  function renderStatus() {
+    var bar = U.byId('jx-statusbar');
+    if (!bar) return;
+    var DSx = global.JX.DS;
+    var st = DSx ? DSx.state() : { mode: 'demo', loading: false, count: 0, fetchedAt: '', remoteUpdate: '', error: '' };
+
+    bar.className = 'statusbar' + (st.loading ? ' is-busy' : (st.mode === 'live' ? '' : ' is-demo'));
+
+    var txt = U.byId('sb-txt'), meta = U.byId('sb-meta'), pill = U.byId('pill-mode');
+    if (st.loading) {
+      txt.textContent = st.progress || '正在更新数据…';
+      meta.textContent = '';
+    } else if (st.mode === 'live') {
+      txt.textContent = '实时数据 · 中国体彩网官方接口';
+      meta.textContent = '更新 ' + (st.fetchedAt || st.updatedAt || '—') + ' · 可分析 ' + st.count + ' 场';
+    } else {
+      txt.textContent = '演示数据（未连接接口）';
+      meta.textContent = st.error ? '接口不可用：' + st.error : '点右侧按钮尝试拉取官方数据';
+    }
+    if (pill) {
+      pill.innerHTML = st.loading
+        ? '<i class="dot-live"></i>更新中'
+        : (st.mode === 'live'
+          ? '<i class="dot-live"></i>实时数据'
+          : '演示数据');
+      pill.className = 'pill-live' + (st.mode === 'live' && !st.loading ? '' : ' pill-demo');
+    }
+    paintMsg();
+  }
+
+  /* ------------------------------------------------------- 手动更新（按钮） */
+  function onRefresh() {
+    var DSx = global.JX.DS;
+    if (!DSx || DSx.state().loading) return;
+    var btn = U.byId('jx-refresh');
+    if (btn) { btn.disabled = true; btn.textContent = '更新中…'; }
+    var t0 = Date.now();
+    DSx.refresh().then(function (r) {
+      if (btn) { btn.disabled = false; btn.textContent = '↻ 数据更新'; }
+      if (r && r.ok) {
+        msg('更新成功：' + r.count + ' 场 · 接口数据时间 ' + (r.remoteUpdate || '—') + ' · 耗时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's', 'ok');
+      } else {
+        msg('更新失败：' + ((r && r.reason) || '未知原因') + '（继续使用当前数据）', 'err');
+      }
+      renderStatus();
+    });
   }
 
   function pageHead(crumb, title, sub) {
@@ -176,14 +253,39 @@
 
     /* --- 顶部 KPI --- */
     var rk = D.records.kpi;
+    var isLive = global.JX.DS && global.JX.DS.state().mode === 'live';
+    var todayMs = D.matches.filter(function (m) { return m.day === 'today'; });
+    var liveMar = 0, liveN = 0;
+    if (isLive) {
+      todayMs.forEach(function (m) {
+        var rr = global.JX.model(m);
+        if (rr && rr.sp && isFinite(rr.sp.margin)) { liveMar += rr.sp.margin; liveN++; }
+      });
+      liveMar = liveN ? liveMar / liveN : 0;
+    }
     var kpis =
       '<div class="kpis mb16">' +
-        kpi('今日可分析赛事', D.matches.filter(function (m) { return m.day === 'today'; }).length, '场', '覆盖 ' + uniq(D.matches.filter(function (m) { return m.day === 'today'; }).map(function (m) { return m.league; })).length + ' 个联赛', 'k-draw') +
-        kpi('近 30 日命中率', (rk.rate * 100).toFixed(1), '%', rk.window, 'k-win') +
-        kpi('近 30 日回报率', (rk.roi * 100).toFixed(1), '%', '总投入 ' + rk.stake.toFixed(1) + 'u · 净收益 ' + rk.profit.toFixed(2) + 'u', 'k-gold') +
-        kpi('模型校准误差 (Brier)', D.model.health.brier.toFixed(3), '', '基线 0.250，越低越好', 'k-lose') +
-        kpi('推荐总数（可回溯）', rk.totalPicks, '注', '每注开赛前锁定公示', '') +
+        kpi('今日可分析赛事', todayMs.length, '场', '覆盖 ' + uniq(todayMs.map(function (m) { return m.league; })).length + ' 个联赛', 'k-draw') +
+        (isLive
+          ? kpi('官方盘口水位', (liveMar * 100).toFixed(1), '%', '实测 ' + liveN + ' 场胜平负盘均值', 'k-lose') +
+            kpi('单关长期期望', (-liveMar * 100).toFixed(1), '%', '扣除水位后无正期望——如实呈现', 'k-warn') +
+            kpi('满足价值阈值的推荐', '0', '条', '本数据源不含基本面，模型无法优于市场', 'k-lose') +
+            kpi('串关搭配参考', '有', '', '见「串关搭配」栏目与倍投计划', 'k-gold')
+          : kpi('近 30 日命中率', (rk.rate * 100).toFixed(1), '%', rk.window, 'k-win') +
+            kpi('近 30 日回报率', (rk.roi * 100).toFixed(1), '%', '总投入 ' + rk.stake.toFixed(1) + 'u · 净收益 ' + rk.profit.toFixed(2) + 'u', 'k-gold') +
+            kpi('模型校准误差 (Brier)', D.model.health.brier.toFixed(3), '', '基线 0.250，越低越好', 'k-lose') +
+            kpi('推荐总数（可回溯）', rk.totalPicks, '注', '每注开赛前锁定公示', '')
+        ) +
       '</div>';
+
+    /* --- 实时数据模式下的口径说明 --- */
+    var notice = isLive
+      ? '<div class="notice-strip"><div><b>当前为官方实时数据模式。</b>' +
+        '赛程、双方球队、联赛与各玩法赔率（胜平负 / 让球 / 总进球 / 比分 / 半全场）均来自中国体彩网公开接口，点顶部「数据更新」可随时重新拉取。' +
+        '由于该接口<b>不提供球队级基本面</b>（xG、伤停、阵容、交锋），模型只能由赔率反解 λ，因此不具备独立于市场的预测优势——' +
+        '这也是为什么「满足价值阈值的推荐」显示为 0。要产生真实的正期望，需要接入球队级数据源；在那之前，本站选择如实呈现负期望，而不是编造推荐。' +
+        '<a href="compliance.html#data">查看数据源说明 →</a></div></div>'
+      : '';
 
     /* --- 工具栏 --- */
     var leagues = uniq(D.matches.map(function (m) { return m.league; }));
@@ -220,7 +322,7 @@
 
     var host = U.byId('home-body');
     host.innerHTML =
-      kpis + toolbar +
+      notice + kpis + toolbar +
       '<div class="grid-side">' +
         '<div>' +
           '<div class="card" id="list-card">' +
@@ -306,6 +408,22 @@
   }
 
   /* --- 单行赛事 --- */
+  function rankHtml(team) {
+    return team.rank === null || team.rank === undefined ? '' : '<span class="trank">#' + team.rank + '</span>';
+  }
+  /* 数据源未提供基本面时，用模型可解释的量替代（避免空白行，也不编造数据） */
+  function hintHtml(m, r) {
+    var parts = [];
+    var c = m.coverage || {};
+    if (m.home.xg !== null && m.home.xg !== undefined) parts.push('xG ' + U.num(m.home.xg, 2) + ' vs ' + U.num(m.away.xg, 2));
+    if (m.h2h) parts.push('交锋 ' + m.h2h.hw + '胜' + m.h2h.d + '平' + m.h2h.aw + '负');
+    parts.push('λ ' + U.num(r.lam[0], 2) + ' / ' + U.num(r.lam[1], 2));
+    parts.push('期望总进球 ' + U.num(r.lam[0] + r.lam[1], 2));
+    if (m.venue) parts.push(U.esc(m.venue));
+    if (!c.xg && !c.form) parts.push('基本面数据源未提供');
+    return '<div class="m-hint">' + parts.join(' · ') + '</div>';
+  }
+
   function matchRow(m) {
     var r = global.JX.model(m);
     var best = m.picks.map(function (p) { return { p: p, e: evalPick(m, p) }; })
@@ -317,16 +435,18 @@
     var top = evs[0] >= evs[1] && evs[0] >= evs[2] ? 0 : (evs[1] >= evs[2] ? 1 : 2);
     var hi = evs[top] > 0 ? ['w', 'd', 'l'][top] : '';
 
+    var lg = D.leagues.filter(function (l) { return l.name === m.league; })[0];
+
     return '<div class="mrow">' +
       '<div class="m-meta">' +
         '<span class="no-chip">' + U.esc(m.no) + '</span>' +
         '<span class="m-time">' + U.esc(m.kickoff) + '</span>' +
-        '<span class="league-chip lv-' + (D.leagues.filter(function (l) { return l.name === m.league; })[0] ? Math.min(4, D.leagues.filter(function (l) { return l.name === m.league; })[0].tier) : 3) + '">' + U.esc(m.league) + '</span>' +
+        '<span class="league-chip lv-' + (lg ? Math.min(4, lg.tier) : 3) + '">' + U.esc(m.league) + '</span>' +
       '</div>' +
       '<div class="m-teams">' +
-        '<div class="m-team"><span class="tname">' + U.esc(m.home.short) + '</span><span class="trank">#' + m.home.rank + '</span>' + C.form(m.home.recent, '主队近5场') + '</div>' +
-        '<div class="m-team" style="margin-top:3px"><span class="tname">' + U.esc(m.away.short) + '</span><span class="trank">#' + m.away.rank + '</span>' + C.form(m.away.recent, '客队近5场') + '</div>' +
-        '<div class="m-hint">xG ' + U.num(m.home.xg, 2) + ' vs ' + U.num(m.away.xg, 2) + ' · 交锋 ' + m.h2h.hw + '胜' + m.h2h.d + '平' + m.h2h.aw + '负 · ' + U.esc(m.venue) + '</div>' +
+        '<div class="m-team"><span class="tname">' + U.esc(m.home.short) + '</span>' + rankHtml(m.home) + C.form(m.home.recent || [], '主队近5场') + '</div>' +
+        '<div class="m-team" style="margin-top:3px"><span class="tname">' + U.esc(m.away.short) + '</span>' + rankHtml(m.away) + C.form(m.away.recent || [], '客队近5场') + '</div>' +
+        hintHtml(m, r) +
       '</div>' +
       '<div class="m-prob">' +
         C.pbar({ w: r.w, d: r.d, l: r.l }, 8) +
@@ -373,6 +493,8 @@
   function uniq(a) { var s = [], o = {}; a.forEach(function (x) { if (!o[x]) { o[x] = 1; s.push(x); } }); return s; }
 
   global.JX.renderHome = renderHome;
+  global.JX.renderStatus = renderStatus;
+  global.JX.statusMsg = msg;
   global.JX.layout = layout;
   global.JX.pageHead = pageHead;
   global.JX.kpi = kpi;
