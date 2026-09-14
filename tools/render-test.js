@@ -35,7 +35,7 @@ function run(page, mode) {
   return new Promise(function (resolve) {
     var html = fs.readFileSync(path.join(ROOT, page.file), 'utf8');
     var scripts = [];
-    html.replace(/<script src="([^"]+)"><\/script>/g, function (_, src) { scripts.push(src); return ''; });
+    html.replace(/<script src="([^"]+?)(?:\?[^"]*)?"><\/script>/g, function (_, src) { scripts.push(src); return ''; });
 
     var errors = [];
     var dom = new JSDOM(html, {

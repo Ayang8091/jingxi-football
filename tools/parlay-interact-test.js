@@ -6,7 +6,7 @@ var ROOT = '/Users/apple/WorkBuddy/2026-09-14-14-50-46/jingxi';
 
 var html = fs.readFileSync(path.join(ROOT, 'parlay.html'), 'utf8');
 var scripts = [];
-html.replace(/<script src="([^"]+)"><\/script>/g, function (_, s) { scripts.push(s); return ''; });
+html.replace(/<script src="([^"]+?)(?:\?[^"]*)?"><\/script>/g, function (_, s) { scripts.push(s); return ''; });
 
 var vc = new VirtualConsole();
 vc.on('jsdomError', function (e) { console.log('JSDOM ERROR:', e.message); });
