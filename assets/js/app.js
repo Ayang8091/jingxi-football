@@ -238,7 +238,8 @@
       if (state.league !== '全部') arr = arr.filter(function (m) { return m.league === state.league; });
       if (state.play !== '全部') {
         arr = arr.filter(function (m) {
-          return m.picks.some(function (p) { return p.play === state.play; });
+          return (m.recs || []).some(function (p) { return p.play === state.play; }) ||
+            m.picks.some(function (p) { return p.play === state.play; });
         });
       }
       arr = arr.slice();
@@ -258,11 +259,12 @@
     var rk = D.records.kpi;
     var isLive = global.JX.DS && global.JX.DS.state().mode === 'live';
     var todayMs = D.matches.filter(function (m) { return m.day === 'today'; });
-    var liveMar = 0, liveN = 0;
+    var liveMar = 0, liveN = 0, pickN = 0, valN = 0;
     if (isLive) {
       todayMs.forEach(function (m) {
         var rr = global.JX.model(m);
         if (rr && rr.sp && isFinite(rr.sp.margin)) { liveMar += rr.sp.margin; liveN++; }
+        (m.recs || m.picks || []).forEach(function (p) { pickN++; });
       });
       liveMar = liveN ? liveMar / liveN : 0;
     }
@@ -271,9 +273,9 @@
         kpi('今日可分析赛事', todayMs.length, '场', '覆盖 ' + uniq(todayMs.map(function (m) { return m.league; })).length + ' 个联赛', 'k-draw') +
         (isLive
           ? kpi('官方盘口水位', (liveMar * 100).toFixed(1), '%', '实测 ' + liveN + ' 场胜平负盘均值', 'k-lose') +
-            kpi('单关长期期望', (-liveMar * 100).toFixed(1), '%', '扣除水位后无正期望——如实呈现', 'k-warn') +
-            kpi('满足价值阈值的推荐', '0', '条', '本数据源不含基本面，模型无法优于市场', 'k-lose') +
-            kpi('串关搭配参考', '有', '', '见「串关搭配」栏目与倍投计划', 'k-gold')
+            kpi('今日推荐方向', pickN, '条', '胜平负/让球各1 · 总进球/半全场各2 · 比分3', 'k-gold') +
+            kpi('单关长期期望', (-liveMar * 100).toFixed(1), '%', '扣除水位后的真实期望', 'k-warn') +
+            kpi('串关搭配参考', '有', '', '串关模拟页与独立工作台可用', 'k-gold')
           : kpi('近 30 日命中率', (rk.rate * 100).toFixed(1), '%', rk.window, 'k-win') +
             kpi('近 30 日回报率', (rk.roi * 100).toFixed(1), '%', '总投入 ' + rk.stake.toFixed(1) + 'u · 净收益 ' + rk.profit.toFixed(2) + 'u', 'k-gold') +
             kpi('模型校准误差 (Brier)', D.model.health.brier.toFixed(3), '', '基线 0.250，越低越好', 'k-lose') +
@@ -285,8 +287,8 @@
     var notice = isLive
       ? '<div class="notice-strip"><div><b>当前为官方实时数据模式。</b>' +
         '赛程、双方球队、联赛与各玩法赔率（胜平负 / 让球 / 总进球 / 比分 / 半全场）均来自中国体彩网公开接口，点顶部「数据更新」可随时重新拉取。' +
-        '由于该接口<b>不提供球队级基本面</b>（xG、伤停、阵容、交锋），模型只能由赔率反解 λ，因此不具备独立于市场的预测优势——' +
-        '这也是为什么「满足价值阈值的推荐」显示为 0。要产生真实的正期望，需要接入球队级数据源；在那之前，本站选择如实呈现负期望，而不是编造推荐。' +
+        '模型由官方赔率反解 λ 后重算各玩法概率：胜平负、让球胜平负各取概率最高的 1 个方向，总进球、半全场各取 2 个，比分取 3 个，均按概率从高到低排列。' +
+        '其中半全场因模型无法分解半场进程，概率取该玩法官方赔率去水后的隐含概率，已在条目中标注。' +
         '<a href="compliance.html#data">查看数据源说明 →</a></div></div>'
       : '';
 
@@ -310,16 +312,15 @@
         '</select></div>' +
       '</div>';
 
-    /* --- 当日核心推荐 --- */
+    /* --- 当日核心推荐（按概率排序 Top 3） --- */
     function topPicks() {
       var all = [];
       dayList().forEach(function (m) {
-        m.picks.forEach(function (p) {
-          var e = evalPick(m, p);
-          if (e.ev > 0 && e.stake > 0) all.push({ m: m, p: p, e: e });
+        (m.recs || []).forEach(function (p) {
+          all.push({ m: m, p: p, ev: p.sp ? p.p * p.sp - 1 : null });
         });
       });
-      all.sort(function (a, b) { return b.e.ev - a.e.ev || b.m.conf - a.m.conf; });
+      all.sort(function (a, b) { return b.p.p - a.p.p; });
       return all.slice(0, 3);
     }
 
@@ -330,19 +331,19 @@
         '<div>' +
           '<div class="card" id="list-card">' +
             '<div class="card-h"><h3>赛事预测清单 <span class="hint" id="list-count"></span></h3>' +
-              '<span class="tiny muted">推荐按"模型概率 × 竞彩 SP"计算价值，无正期望则空仓</span></div>' +
+              '<span class="tiny muted">各玩法按概率从高到低推荐：胜平负/让球 1 · 总进球/半全场 2 · 比分 3</span></div>' +
             '<div class="card-b flush"><div class="match-list" id="match-list"></div></div>' +
           '</div>' +
           '<div class="callout mt16"><h4>怎么读这张表</h4>' +
             '<ul class="small">' +
               '<li><b>模型概率</b>：由 Dixon-Coles 修正泊松模型按双方期望进球 λ 计算，页面实时生成，非人工填写。</li>' +
-              '<li><b>竞彩 SP</b>：竞彩足球官方胜平负奖金值。与"公平赔率"对比即是价值判断的依据。</li>' +
-              '<li><b>价值 EV</b> = 模型概率 × SP − 1。EV ≤ 0 的选项一律不作推荐，宁可空仓。</li>' +
-              '<li><b>建议单位</b>：以 1/4 凯利定仓，单场上限 1.5% 本金。单位是相对仓位，不是金额。</li>' +
+              '<li><b>各玩法推荐</b>：胜平负、让球胜平负各取概率最高的 1 个方向；总进球、半全场各取 2 个；比分取 3 个，均按概率从高到低排列。</li>' +
+              '<li><b>半全场口径</b>：模型无法分解半场进程，该项概率取官方赔率去水后的隐含概率（条目中已标注「市场」）。</li>' +
+              '<li><b>价值 EV</b> = 模型概率 × SP − 1，同步展示供参考：EV 为正代表模型概率高于市场定价，为负仅说明水位覆盖。</li>' +
             '</ul></div>' +
         '</div>' +
         '<div>' +
-          '<div class="card"><div class="card-h"><h3>当日核心推荐</h3><span class="tiny muted">EV 排序 Top 3</span></div>' +
+          '<div class="card"><div class="card-h"><h3>当日核心推荐</h3><span class="tiny muted">按概率排序 Top 3</span></div>' +
             '<div class="card-b" id="top-picks"></div></div>' +
           '<div class="card"><div class="card-h"><h3>模型健康度</h3><span class="tag t-brand">' + U.esc(D.model.name) + '</span></div>' +
             '<div class="card-b">' +
@@ -374,21 +375,21 @@
     function renderTop() {
       var tp = topPicks();
       var box = U.byId('top-picks');
-      if (!tp.length) { box.innerHTML = '<p class="muted small mb0">当日无满足价值阈值的推荐，建议空仓观望。</p>'; return; }
+      if (!tp.length) { box.innerHTML = '<p class="muted small mb0">当日暂无可分析赛事或该玩法未开售，拉取数据后自动生成推荐。</p>'; return; }
       box.innerHTML = tp.map(function (t, i) {
-        var m = t.m, p = t.p, e = t.e;
+        var m = t.m, p = t.p, ev = t.ev;
         return '<div style="padding:11px 0;border-bottom:1px dashed var(--line)">' +
           '<div class="row between mb8">' +
             '<div class="row gap8"><span class="no-chip">' + U.esc(m.no) + '</span><span class="league-chip lv-' + (i + 1) + '">' + U.esc(m.league) + '</span></div>' +
-            '<span class="tag t-gold">EV ' + U.signed(e.ev, 1) + '</span>' +
+            (ev === null ? '<span class="tag">未开售 SP</span>' : '<span class="tag ' + (ev > 0 ? 't-win' : 't-gold') + '">EV ' + U.signed(ev, 1) + '</span>') +
           '</div>' +
           '<div class="mb8" style="font-weight:700;font-size:14.5px">' + U.esc(m.home.short) + ' <span class="muted" style="font-weight:400">vs</span> ' + U.esc(m.away.short) + '</div>' +
           '<div class="row between">' +
             '<div><span class="tag t-brand">' + U.esc(p.play) + '</span> <b style="font-size:14px">' + U.esc(p.sel) + '</b></div>' +
-            '<div class="right"><div class="odds" style="font-size:16px;font-weight:800;color:var(--win)">' + U.odds(p.sp) + '</div>' +
-            '<div class="tiny muted">模型 ' + U.pct(e.p, 1) + ' · 建议 ' + U.num(e.stake, 2) + 'u</div></div>' +
+            '<div class="right"><div class="odds" style="font-size:16px;font-weight:800;color:var(--win)">' + (p.sp ? U.odds(p.sp) : '—') + '</div>' +
+            '<div class="tiny muted">' + (p.basis === 'market' ? '市场隐含 ' : '模型 ') + U.pct(p.p, 1) + '</div></div>' +
           '</div>' +
-          '<div class="pbar mt8" style="height:6px"><i class="p-w" style="width:' + Math.min(100, e.p * 100) + '%;background:linear-gradient(90deg,var(--accent),#e8c477)"></i></div>' +
+          '<div class="pbar mt8" style="height:6px"><i class="p-w" style="width:' + Math.min(100, p.p * 100) + '%;background:linear-gradient(90deg,var(--accent),#e8c477)"></i></div>' +
           '<a class="tiny" href="match.html?id=' + m.id + '">查看完整剖析 →</a>' +
         '</div>';
       }).join('');
@@ -429,9 +430,8 @@
 
   function matchRow(m) {
     var r = global.JX.model(m);
-    var best = m.picks.map(function (p) { return { p: p, e: evalPick(m, p) }; })
-      .filter(function (x) { return x.e.ev > 0 && x.e.stake > 0; })
-      .sort(function (a, b) { return b.e.ev - a.e.ev; })[0];
+    var recs = m.recs || [];
+    var best = recs.slice().sort(function (a, b) { return b.p - a.p; })[0];
     var mk = r.sp;
     /* 只高亮"存在正期望"的那一档；三档全为负则不highlight，避免误导 */
     var evs = [r.w * m.sp.w - 1, r.d * m.sp.d - 1, r.l * m.sp.l - 1];
@@ -467,14 +467,30 @@
       '</div>' +
       '<div class="m-side">' +
         (best
-          ? '<div class="pick-badge"><span class="p-main" style="color:var(--win)">' + U.esc(best.p.sel) + '</span>' +
-            '<span class="p-sp">' + U.esc(best.p.play) + ' @ ' + U.odds(best.p.sp) + '</span></div>' +
-            '<span class="tag t-win">EV ' + U.signed(best.e.ev, 1) + '</span>'
-          : '<span class="tag t-warn">无正期望 · 空仓</span>') +
+          ? '<div class="pick-badge"><span class="p-main" style="color:var(--win)">' + U.esc(best.sel) + '</span>' +
+            '<span class="p-sp">' + U.esc(best.play) + (best.sp ? ' @ ' + U.odds(best.sp) : '') + '</span></div>' +
+            '<span class="tiny muted">' + (best.basis === 'market' ? '市场 ' : '模型 ') + U.pct(best.p, 1) + '</span>'
+          : '<span class="tag t-warn">该玩法未开售</span>') +
         '<div>' + C.stars(m.conf) + '</div>' +
         '<a class="tiny" href="match.html?id=' + m.id + '">完整剖析 →</a>' +
       '</div>' +
+      '<div class="m-recs">' + recsHtml(recs) + '</div>' +
     '</div>';
+  }
+
+  /* 各玩法推荐条：胜平负/让球 1 个 · 总进球/半全场 2 个 · 比分 3 个，按概率从高到低 */
+  function recsHtml(recs) {
+    if (!recs.length) return '';
+    var ORDER = ['胜平负', '让球胜平负', '总进球', '半全场', '比分'];
+    return ORDER.map(function (play) {
+      var items = recs.filter(function (p) { return p.play === play; });
+      if (!items.length) return '';
+      return '<span class="rc-g"><span class="rc-p">' + play + '</span>' +
+        items.map(function (p) {
+          return '<span class="rc-i" title="' + (p.basis === 'market' ? '市场隐含概率' : '模型概率') + ' ' + U.pct(p.p, 1) + '">' +
+            U.esc(p.sel) + (p.sp ? '<b>@' + U.odds(p.sp) + '</b>' : '') + '</span>';
+        }).join('') + '</span>';
+    }).join('');
   }
 
   function oddsCell(lab, sp, imp, sel) {

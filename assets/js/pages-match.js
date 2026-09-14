@@ -47,7 +47,20 @@
 
     /* --- 核心结论卡 --- */
     var picks = m.picks.map(function (p) { return { p: p, e: evalPick(m, p) }; });
-    var best = picks.filter(function (x) { return x.e.stake > 0; }).sort(function (a, b) { return b.e.ev - a.e.ev; })[0];
+
+    var recOrder = ['胜平负', '让球胜平负', '总进球', '半全场', '比分'];
+    var recList = (m.recs || []);
+    var recRows = recOrder.map(function (play) {
+      var items = recList.filter(function (p) { return p.play === play; });
+      if (!items.length) return '';
+      return '<div class="row between small" style="padding:6px 0;border-bottom:1px dashed var(--line);gap:10px">' +
+        '<span style="white-space:nowrap"><span class="tag t-brand">' + play + '</span></span>' +
+        '<span style="text-align:right">' + items.map(function (p) {
+          return '<b>' + U.esc(p.sel) + '</b>' +
+            (p.sp ? ' <span class="muted num">@' + U.odds(p.sp) + '</span>' : '') +
+            ' <span class="tiny muted">(' + (p.basis === 'market' ? '市场 ' : '') + U.pct(p.p, 1) + ')</span>';
+        }).join('　') + '</span></div>';
+    }).join('') || '<p class="small muted mb0">本场各玩法盘口未开售或数据未返回。</p>';
 
     var conclusion =
       '<div class="card"><div class="card-h"><h3>模型结论</h3>' +
@@ -64,20 +77,10 @@
             '<p class="small muted mt8 mb0">上排为模型概率，下排为竞彩官方 SP 及其去水隐含概率。模型概率高于隐含概率即为正向价值。</p>' +
           '</div>' +
           '<div>' +
-            '<div class="callout c-gold mb8"><h4>本场推荐</h4>' +
-              (best
-                ? '<p class="mb0"><b style="font-size:15px">' + U.esc(best.p.play) + ' · ' + U.esc(best.p.sel) + '</b> @ ' + U.odds(best.p.sp) +
-                  '<br><span class="small">模型概率 ' + U.pct(best.e.p, 1) + '，公平赔率 ' + U.num(best.e.fair, 2) +
-                  '，期望值 <b class="pos">' + U.signed(best.e.ev, 1) + '</b>，建议 ' + U.num(best.e.stake, 2) + ' 个单位。</span></p>'
-                : '<p class="mb0">本场无满足价值阈值的选项，<b>建议空仓</b>。空仓是模型给出的结论之一，不是遗漏。</p>') +
+            '<div class="callout c-gold mb8"><h4>本场推荐（按概率从高到低）</h4>' +
+              '<p class="tiny muted mb8" style="margin-top:-2px">胜平负 / 让球胜平负各 1 个方向 · 总进球 / 半全场各 2 个 · 比分 3 个</p>' +
+              recRows +
             '</div>' +
-            m.picks.slice(1).map(function (p, i) {
-              var e = picks[i + 1].e;
-              return '<div class="row between small" style="padding:5px 0;border-bottom:1px dashed var(--line)">' +
-                '<span><span class="tag">' + U.esc(p.play) + '</span> ' + U.esc(p.sel) + '</span>' +
-                '<span class="num">@' + U.odds(p.sp) + ' · EV <b class="' + (e.ev > 0 ? 'pos' : 'neg') + '">' + U.signed(e.ev, 1) + '</b> · ' + U.num(e.stake, 2) + 'u</span>' +
-                '</div>';
-            }).join('') +
           '</div>' +
         '</div>' +
         '<div class="callout mt16"><h4>一句话判断</h4><p class="mb0">' + U.esc(m.summary) + '</p></div>' +

@@ -240,6 +240,76 @@
     return picks;
   }
 
+  /* 各玩法固定条数、按概率从高到低排列的推荐（今日预测展示口径）：
+     胜平负 1 条 · 让球胜平负 1 条 · 总进球 2 条 · 半全场 2 条 · 比分 3 条
+     basis: 'model' = 模型概率；'market' = 官方赔率去水隐含概率（模型无法分解半场进程时） */
+  function buildRecs(raw, res) {
+    var recs = [];
+    function add(play, sel, sp, p, basis) {
+      if (!isFinite(p) || p <= 0) return;
+      if (sp !== null && (!isFinite(sp) || sp <= 1)) return;
+      recs.push({ play: play, sel: sel, sp: sp, p: p, basis: basis || 'model' });
+    }
+    /* 胜平负 · 1 条 */
+    var had = raw.had || {};
+    if (had.h && had.d && had.a) {
+      var a1 = [['主胜', +had.h, res.w], ['平局', +had.d, res.d], ['客胜', +had.a, res.l]];
+      a1.sort(function (x, y) { return y[2] - x[2]; });
+      add('胜平负', a1[0][0], a1[0][1], a1[0][2]);
+    }
+    /* 让球胜平负 · 1 条 */
+    var hhad = raw.hhad || {};
+    if (hhad.h && hhad.d && hhad.a && hhad.goalLine !== '' && hhad.goalLine !== undefined && hhad.goalLine !== null) {
+      var line = parseFloat(hhad.goalLine);
+      if (isFinite(line)) {
+        var q = M.handicapProbs(res, line);
+        var a2 = [['让胜', +hhad.h, q.w], ['让平', +hhad.d, q.d], ['让负', +hhad.a, q.l]];
+        a2.sort(function (x, y) { return y[2] - x[2]; });
+        add('让球胜平负', a2[0][0], a2[0][1], a2[0][2]);
+      }
+    }
+    /* 总进球 · 2 条 */
+    var ttg = raw.ttg || {}, tv = [], ti = [];
+    for (var i = 0; i <= 7; i++) {
+      var o = ttg['s' + i];
+      if (o !== undefined && o !== null && o !== '' && +o > 1) { tv.push(+o); ti.push(i); }
+    }
+    if (tv.length >= 6) {
+      var a3 = ti.map(function (n, k) { return [n === 7 ? '7+球' : n + '球', tv[k], M.bucket(res, n)]; });
+      a3.sort(function (x, y) { return y[2] - x[2]; });
+      a3.slice(0, 2).forEach(function (x) { add('总进球', x[0], x[1], x[2]); });
+    }
+    /* 半全场 · 2 条（泊松矩阵只有全场口径，半场进程不可分解，
+       概率取该玩法官方赔率去水后的隐含概率，如实标注 basis='market'） */
+    var hafu = raw.hafu || {};
+    var HMAP = { hh: '胜胜', hd: '胜平', ha: '胜负', dh: '平胜', dd: '平平', da: '平负', ah: '负胜', ad: '负平', aa: '负负' };
+    var hv = [], hk = [];
+    Object.keys(hafu).forEach(function (k) {
+      var v = hafu[k];
+      if (HMAP[k] && v !== undefined && v !== null && v !== '' && +v > 1) { hv.push(+v); hk.push(k); }
+    });
+    if (hv.length >= 6) {
+      var v4 = devigN(hv);
+      if (v4) {
+        var a4 = hk.map(function (k, k2) { return [HMAP[k], hv[k2], v4.p[k2]]; });
+        a4.sort(function (x, y) { return y[2] - x[2]; });
+        a4.slice(0, 2).forEach(function (x) { add('半全场', x[0], x[1], x[2], 'market'); });
+      }
+    }
+    /* 比分 · 3 条（模型 DC 比分矩阵按概率排序；官方比分 SP 可对照则带出） */
+    var crs = raw.crs || {}, crsOdds = {};
+    Object.keys(crs).forEach(function (k) {
+      var mm = /^s(\d+)s(\d+)$/.exec(k);
+      if (mm && crs[k] !== undefined && crs[k] !== null && crs[k] !== '' && +crs[k] > 1) {
+        crsOdds[(+mm[1]) + ':' + (+mm[2])] = +crs[k];
+      }
+    });
+    (res.scores || []).slice(0, 3).forEach(function (s) {
+      add('比分', s.s, crsOdds[s.s] || null, s.p);
+    });
+    return recs;
+  }
+
   function normalizeMatch(raw, meta) {
     var had = raw.had || {}, hhad = raw.hhad || {};
     var sp = (had.h && had.d && had.a) ? { w: +had.h, d: +had.d, l: +had.a } : null;
@@ -261,8 +331,10 @@
 
     var picks = buildPicks(raw, res);
     var minEv = (global.JX_DATA && global.JX_DATA.model && global.JX_DATA.model.params.evThreshold) || 0.02;
+    /* 不再按 EV 阈值空仓：每场固定输出 EV 最优的 2 条方向，
+       EV > 阈值标记为「价值推荐」(v=true)，负 EV 标记为「参考」(v=false)，如实展示 */
     var pickList = picks
-      .filter(function (p) { return p.ev > minEv; })
+      .map(function (p) { p.v = p.ev > minEv; return p; })
       .sort(function (a, b) { return b.ev - a.ev; })
       .slice(0, 2);
 
@@ -317,6 +389,7 @@
       h2h: null,
       lam: lam,
       conf: conf,
+      recs: buildRecs(raw, res),
       picks: pickList.map(function (p) {
         return {
           play: p.play, sel: p.sel, sp: p.sp, stake: stakeFor(p),
