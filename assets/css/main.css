@@ -569,3 +569,20 @@ input[type="checkbox"][data-leg] {
   width: 16px; height: 16px; accent-color: var(--accent, #123a6b);
   cursor: pointer; vertical-align: middle;
 }
+
+/* ============ parlay.html 双栏目切换（串关搭配 / 资金计划） ============ */
+.ptabs { display: flex; gap: 10px; margin-bottom: 16px; }
+.ptab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 13px 16px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; cursor: pointer; font-family: inherit;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.ptab:hover { border-color: var(--brand); }
+.ptab.on { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: var(--sh-1); }
+.ptab-t { font-weight: 700; font-size: 15.5px; line-height: 1.2; }
+.ptab-s { font-size: 12px; opacity: .72; }
+@media (max-width: 640px) {
+  .ptabs { flex-direction: column; }
+  .ptab { flex-direction: row; justify-content: center; gap: 10px; padding: 10px 14px; }
+}

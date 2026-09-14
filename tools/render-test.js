@@ -21,7 +21,8 @@ var FIXTURE = path.join(__dirname, 'fixtures', 'sporttery-sample.json');
 var PAGES = [
   { file: 'index.html', key: 'home', target: 'home-body', min: 4000, must: ['match-list', '今日赛事'] },
   { file: 'match.html', key: 'match', target: 'match-body', min: 6000, must: ['模型结论', '总进球数分布', '比分概率矩阵', '本场风险因子'] },
-  { file: 'parlay.html', key: 'parlay', target: 'parlay-body', min: 6000, must: ['串关组合清单', '自动', '倍投资金计划', '风险测算', '数学结论'] },
+  { file: 'sim.html', key: 'sim', target: 'sim-body', min: 4000, must: ['串关模拟', '模拟参数', '模拟结果', '串关的数学事实'] },
+  { file: 'parlay.html', key: 'parlay', target: 'parlay-body', min: 6000, must: ['串关组合清单', '自动', '手动添加组合腿', '资金计划'] },
   { file: 'model.html', key: 'model', target: 'model-body', min: 8000, must: ['Dixon-Coles', '校准验证', '资金管理规则'] },
   { file: 'records.html', key: 'records', target: 'records-body', min: 6000, must: ['周度命中率', '月度复盘', '按玩法拆分'] },
   { file: 'dashboard.html', key: 'dash', target: 'dash-body', min: 5000, must: ['联赛属性基准', '数据源与更新频率'] },
@@ -84,7 +85,9 @@ function run(page, mode) {
         return !w.document.getElementById(k) && body.indexOf(k) < 0 && text.indexOf(k) < 0;
       });
       var navCount = w.document.querySelectorAll('.nav a').length;
-      var navOk = navCount === 6;   // 串关搭配为独立页，不在主站导航显示
+      /* parlay 为独立工作台：隐藏全部站点导航（设计行为），其余页面 5 项导航 */
+      var navExp = page.key === 'parlay' ? 0 : 5;
+      var navOk = navCount === navExp;
       var footOk = body.indexOf('未满 18 周岁禁止购彩') > -1;
       var barOk = !!w.document.getElementById('jx-statusbar');
       var btnOk = !!w.document.getElementById('jx-refresh');
@@ -113,7 +116,7 @@ function run(page, mode) {
       if (!r.ok) failed++;
       console.log((r.ok ? '✔' : '✘') + ' ' + PAGES[i].file + '  [' + mode + ']');
       console.log('    渲染长度 ' + r.len + (r.len >= PAGES[i].min ? '' : ' ← 少于 ' + PAGES[i].min) +
-        '   导航 ' + r.navCount + '/6' + (r.navOk ? '' : ' ✘') +
+        '   导航 ' + r.navCount + '/' + (PAGES[i].key === 'parlay' ? '0' : '5') + (r.navOk ? '' : ' ✘') +
         '   状态条 ' + (r.barOk ? '有' : '缺') + (r.btnOk ? '/按钮有' : '/按钮缺') +
         (mode === 'live' ? '   接口调用 ' + r.calls + ' 次' : ''));
       console.log('    状态文案: ' + r.modeTxt);

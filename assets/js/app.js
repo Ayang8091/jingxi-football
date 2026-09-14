@@ -11,10 +11,9 @@
   var NAV = [
     { href: 'index.html', label: '今日预测', key: 'home' },
     { href: 'match.html', label: '单场剖析', key: 'match' },
-    { href: 'model.html', label: '模型与方法', key: 'model' },
+    { href: 'sim.html', label: '串关模拟', key: 'sim' },
     { href: 'records.html', label: '战绩公示', key: 'records' },
-    { href: 'dashboard.html', label: '数据看板', key: 'dash' },
-    { href: 'compliance.html', label: '合规与数据源', key: 'law' }
+    { href: 'dashboard.html', label: '数据看板', key: 'dash' }
   ];
   /* 串关搭配（parlay.html）为独立工作台：不在主站导航/页脚显示，
      通过直接访问 parlay.html 打开，仅与主站共用数据源与缓存。 */
@@ -43,6 +42,8 @@
           '<a class="sb-link" href="compliance.html#data">数据来源</a>' +
         '</div>' +
       '</div></div>' +
+      /* parlay 独立工作台：隐藏全部站点导航栏（品牌栏 + 主导航），仅保留数据状态条 */
+      (active === 'parlay' ? '' :
       '<header class="topbar"><div class="wrap topbar-in">' +
         '<div class="topbar-top">' +
           '<a class="brand" href="index.html" style="text-decoration:none;color:inherit">' +
@@ -59,7 +60,7 @@
             return '<a href="' + n.href + '" class="' + (n.key === active ? 'on' : '') + '">' + n.label + '</a>';
           }).join('') +
         '</nav>' +
-      '</div></header>';
+      '</div></header>');
 
     var f =
       '<footer><div class="wrap">' +
@@ -72,13 +73,13 @@
           '<div><h4>内容</h4><ul>' +
             '<li><a href="index.html">今日赛事预测</a></li>' +
             '<li><a href="match.html">单场深度剖析</a></li>' +
+            '<li><a href="sim.html">串关模拟</a></li>' +
             '<li><a href="records.html">战绩公示与复盘</a></li>' +
             '<li><a href="dashboard.html">数据看板</a></li>' +
           '</ul></div>' +
-          '<div><h4>方法</h4><ul>' +
+          '<div><h4>工具</h4><ul>' +
+            '<li><a href="parlay.html">串关搭配工作台</a></li>' +
             '<li><a href="model.html">模型方法论</a></li>' +
-            '<li><a href="model.html#money">资金管理规则</a></li>' +
-            '<li><a href="model.html#limit">模型局限与边界</a></li>' +
             '<li><a href="compliance.html#data">数据来源与更新</a></li>' +
           '</ul></div>' +
           '<div><h4>风险提示</h4>' +

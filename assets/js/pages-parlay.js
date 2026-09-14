@@ -21,6 +21,7 @@
 
   var state = {
     day: 'today',
+    tab: 'parlay',        // 'parlay' 串关搭配 | 'fund' 资金计划（两个栏目单独显示与操作）
     mode: 'martingale',   // 'martingale' 倍投追利 | 'fixed' 固定投入
     F: 200,               // 固定投入：每期注额
     C: 200,               // 倍投：目标利润
@@ -38,7 +39,7 @@
   /* --------------------------------------------------------- 状态持久化 */
   function save() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify({
-      day: state.day, mode: state.mode, F: state.F, C: state.C, N: state.N,
+      day: state.day, tab: state.tab, mode: state.mode, F: state.F, C: state.C, N: state.N,
       autoN: state.autoN, picked: state.picked, cur: state.cur,
       locked: state.locked, clearedRef: state.clearedRef,
       customLegs: state.customLegs
@@ -180,16 +181,34 @@
     var mg = marginStats();
     var rows = ticket ? buildPlanRows(ticket.sp) : [];
 
+    /* 两个栏目「串关搭配」与「资金计划」单独显示、单独操作 */
     host.innerHTML =
-      hero(ticket, mg) +
-      controls(ticket) +
-      poolCard(pool, ticket) +
-      planCard(ticket, rows) +
-      riskCard(ticket, rows) +
-      presetCard() +
-      mathCard();
+      tabBar() +
+      (state.tab === 'fund'
+        ? controlsFund() +
+          planCard(ticket, rows) +
+          riskCard(ticket, rows) +
+          presetCard() +
+          mathCard()
+        : hero(ticket, mg) +
+          controlsParlay() +
+          poolCard(pool, ticket));
 
     bind(pool);
+  }
+
+  /* ------------------------------------------------------- 栏目切换（双导航） */
+  function tabBar() {
+    function tb(k, label, sub) {
+      var on = state.tab === k;
+      return '<button type="button" data-ptab="' + k + '" class="ptab' + (on ? ' on' : '') + '">' +
+        '<span class="ptab-t">' + label + '</span>' +
+        '<span class="ptab-s">' + sub + '</span></button>';
+    }
+    return '<div class="ptabs" role="tablist">' +
+      tb('parlay', '串关搭配', '勾选组合腿 · 组建当期票面') +
+      tb('fund', '资金计划', '倍投 / 固定投入 · 风险测算') +
+      '</div>';
   }
 
   /* ------------------------------------------------------------------ 区块 */
@@ -211,14 +230,25 @@
       '<div class="k-sub">' + U.esc(sub) + '</div></div>';
   }
 
-  function controls(ticket) {
+  function controlsParlay() {
     var days = [{ k: 'today', l: '今日' }, { k: 'tomorrow', l: '明日' }, { k: 'after', l: '后天' }];
+    var dayLab = state.day === 'today' ? '今日' : (state.day === 'tomorrow' ? '明日' : '后天');
     return '<div class="card"><div class="card-h"><h3>搭配参数</h3>' +
-      '<span class="tiny muted">调整后立即重算；计划进度与锁定记录自动保存</span></div><div class="card-b">' +
+      '<span class="tiny muted">选择数据日后，在下方清单勾选组合腿；资金模式请切换到「资金计划」栏目</span></div><div class="card-b">' +
       '<div class="toolbar" style="margin:0;border:0;padding:0;background:none">' +
         '<div class="seg">' + days.map(function (d) {
           return '<button data-pday="' + d.k + '" class="' + (d.k === state.day ? 'on' : '') + '">' + d.l + '</button>';
         }).join('') + '</div>' +
+        '<span class="tiny muted" style="margin-left:12px">当前 ' + dayLab + '赛事 · 模型概率最高的 ' + state.autoN +
+          ' 条腿已自动勾选，可手动增删</span>' +
+      '</div>' +
+      '</div></div>';
+  }
+
+  function controlsFund() {
+    return '<div class="card"><div class="card-h"><h3>资金参数</h3>' +
+      '<span class="tiny muted">调整后立即重算；计划进度与锁定记录自动保存</span></div><div class="card-b">' +
+      '<div class="toolbar" style="margin:0;border:0;padding:0;background:none;flex-wrap:wrap;gap:8px">' +
         '<div class="seg">' +
           '<button data-pmode="martingale" class="' + (state.mode === 'martingale' ? 'on' : '') + '">倍投追利</button>' +
           '<button data-pmode="fixed" class="' + (state.mode === 'fixed' ? 'on' : '') + '">固定投入</button>' +
@@ -311,7 +341,7 @@
   function planCard(ticket, rows) {
     if (!ticket || !rows.length) {
       return '<div class="card mt16"><div class="card-h"><h2>倍投资金计划</h2></div>' +
-        '<div class="card-b center muted">请先在「串关组合清单」中勾选至少一条腿。</div></div>';
+        '<div class="card-b center muted">请先切换到「串关搭配」栏目，在「串关组合清单」中勾选至少一条腿。</div></div>';
     }
 
     var shown = rows.filter(function (r) { return !(state.clearedRef && r.status === 'ref'); });
@@ -513,6 +543,11 @@
 
   /* -------------------------------------------------------------- 事件绑定 */
   function bind(pool) {
+    U.on(document, 'click', '[data-ptab]', function (e, t) {
+      state.tab = t.dataset.ptab;
+      save(); renderParlay();
+      try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (err) { }
+    });
     U.on(document, 'click', '[data-pday]', function (e, t) {
       state.day = t.dataset.pday; state.cur = 1; state.locked = {};
       state.curOdds = state.curStake = null; state.picked = {};

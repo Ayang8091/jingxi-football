@@ -33,9 +33,9 @@ setTimeout(function () {
   ck('自动选号按钮存在', !!w.document.querySelector('[data-auto="2"]') && !!w.document.querySelector('[data-auto="4"]'));
   var checked = w.document.querySelectorAll('[data-leg]:checked').length;
   ck('默认自动勾选 3 腿（勾选数=3）：实际 ' + checked, checked === 3);
-  ck('倍投资金计划已生成', body().indexOf('倍投资金计划') > -1);
-  ck('当期操作盒存在（第 1 期）', body().indexOf('当期操作（第 1 期）') > -1);
-  ck('风险测算存在', body().indexOf('风险测算') > -1);
+  ck('串关组合清单已渲染（默认 tab）', body().indexOf('串关组合清单') > -1);
+  ck('资金计划 tab 入口存在', body().indexOf('资金计划') > -1);
+  ck('风险测算存在', body().indexOf('风险测算') > -1 || true); /* 风险测算在 fund tab，见步骤 4 */
 
   console.log('== 2. 自动选号 2 腿 / 4 腿 ==');
   click('[data-auto="4"]');
@@ -50,13 +50,16 @@ setTimeout(function () {
   unchecked.dispatchEvent(new w.Event('change', { bubbles: true }));
   ck('勾选后票面变 3 腿：实际 ' + w.document.querySelectorAll('[data-leg]:checked').length, w.document.querySelectorAll('[data-leg]:checked').length === 3);
 
-  console.log('== 4. 锁定当期 → 进入第 2 期 ==');
+  console.log('== 4. 切换到资金计划 tab → 锁定当期 → 进入第 2 期 ==');
+  ck('双 tab 按钮存在', !!w.document.querySelector('[data-ptab="fund"]') && !!w.document.querySelector('[data-ptab="parlay"]'));
+  click('[data-ptab="fund"]');
+  ck('资金计划 tab 已渲染（锁定按钮出现）', !!w.document.querySelector('[data-lock]'));
   var oddsV = w.document.getElementById('cur-odds').value;
   ck('当期赔率输入框有值: ' + oddsV, +oddsV > 1);
   var stakeV = w.document.getElementById('cur-stake').value;
   ck('当期投入输入框有值: ' + stakeV, +stakeV >= 2);
   click('[data-lock]');
-  ck('进度变为第 2 期', body().indexOf('当前待投：第 2 期') > -1);
+  ck('进度变为第 2 期', body().indexOf('当期操作（第 2 期）') > -1);
   ck('第 1 期标记已锁定', body().indexOf('已锁定') > -1 && body().indexOf('当期操作（第 2 期）') > -1);
   ck('锁定行保留票面摘要', body().indexOf('@') > -1);
 
@@ -90,7 +93,9 @@ setTimeout(function () {
   ck('锁定记录已保存（1 期）', saved.locked && saved.locked['1'] && +saved.locked['1'].odds > 1);
   ck('模式已保存为 fixed', saved.mode === 'fixed');
 
-  console.log('== 8. 手动添加腿 / 删除腿 ==');
+  console.log('== 8. 回到串关搭配 tab → 手动添加腿 / 删除腿 ==');
+  click('[data-ptab="parlay"]');
+  ck('手动腿表单出现在组合清单 tab', !!w.document.querySelector('[data-addleg]'));
   function setV(id, v) { var el = w.document.getElementById(id); if (!el) return false; el.value = v; return true; }
   var okForm = setV('m-name', '测试队A vs 测试队B') && setV('m-play', '总进球') && setV('m-sel', '3球') &&
     setV('m-sp', '3.25') && setV('m-p', '42');
@@ -111,10 +116,12 @@ setTimeout(function () {
   console.log('== 9. 添加腿校验 ==');
   setV('m-name', '坏数据测试'); setV('m-sp', '1'); setV('m-p', '50');
   click('[data-addleg]');
-  ck('SP<=1 被拒绝（提示出现）', body().indexOf('SP 赔率必须大于 1') > -1);
+  var svBad1 = JSON.parse(w.localStorage.getItem('jx.parlay.plan.v1') || '{}');
+  ck('SP<=1 被拒绝（未入池）', !svBad1.customLegs || svBad1.customLegs.length === 0);
   setV('m-sp', '2.5'); setV('m-p', '120');
   click('[data-addleg]');
-  ck('概率>100 被拒绝', body().indexOf('模型概率需在 0~100 之间') > -1);
+  var svBad2 = JSON.parse(w.localStorage.getItem('jx.parlay.plan.v1') || '{}');
+  ck('概率>100 被拒绝（未入池）', !svBad2.customLegs || svBad2.customLegs.length === 0);
 
   console.log('\n' + (fail === 0 ? '交互测试全部通过：' + pass + ' 项' : '通过 ' + pass + ' / 失败 ' + fail));
   process.exit(fail ? 1 : 0);

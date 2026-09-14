@@ -12,6 +12,7 @@
   var MAP = {
     home: 'renderHome',
     match: 'renderMatch',
+    sim: 'renderSim',
     parlay: 'renderParlay',
     model: 'renderModel',
     records: 'renderRecords',
