@@ -84,7 +84,7 @@ function run(page, mode) {
         return !w.document.getElementById(k) && body.indexOf(k) < 0 && text.indexOf(k) < 0;
       });
       var navCount = w.document.querySelectorAll('.nav a').length;
-      var navOk = navCount === 7;
+      var navOk = navCount === 6;   // 串关搭配为独立页，不在主站导航显示
       var footOk = body.indexOf('未满 18 周岁禁止购彩') > -1;
       var barOk = !!w.document.getElementById('jx-statusbar');
       var btnOk = !!w.document.getElementById('jx-refresh');
@@ -113,7 +113,7 @@ function run(page, mode) {
       if (!r.ok) failed++;
       console.log((r.ok ? '✔' : '✘') + ' ' + PAGES[i].file + '  [' + mode + ']');
       console.log('    渲染长度 ' + r.len + (r.len >= PAGES[i].min ? '' : ' ← 少于 ' + PAGES[i].min) +
-        '   导航 ' + r.navCount + '/7' + (r.navOk ? '' : ' ✘') +
+        '   导航 ' + r.navCount + '/6' + (r.navOk ? '' : ' ✘') +
         '   状态条 ' + (r.barOk ? '有' : '缺') + (r.btnOk ? '/按钮有' : '/按钮缺') +
         (mode === 'live' ? '   接口调用 ' + r.calls + ' 次' : ''));
       console.log('    状态文案: ' + r.modeTxt);

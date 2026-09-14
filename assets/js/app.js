@@ -11,12 +11,13 @@
   var NAV = [
     { href: 'index.html', label: '今日预测', key: 'home' },
     { href: 'match.html', label: '单场剖析', key: 'match' },
-    { href: 'parlay.html', label: '串关搭配', key: 'parlay' },
     { href: 'model.html', label: '模型与方法', key: 'model' },
     { href: 'records.html', label: '战绩公示', key: 'records' },
     { href: 'dashboard.html', label: '数据看板', key: 'dash' },
     { href: 'compliance.html', label: '合规与数据源', key: 'law' }
   ];
+  /* 串关搭配（parlay.html）为独立工作台：不在主站导航/页脚显示，
+     通过直接访问 parlay.html 打开，仅与主站共用数据源与缓存。 */
 
   /* 数据状态条上的临时提示（重新渲染时保留） */
   var lastMsg = { text: '', cls: '' };
@@ -71,7 +72,6 @@
           '<div><h4>内容</h4><ul>' +
             '<li><a href="index.html">今日赛事预测</a></li>' +
             '<li><a href="match.html">单场深度剖析</a></li>' +
-            '<li><a href="parlay.html">串关搭配与倍投计划</a></li>' +
             '<li><a href="records.html">战绩公示与复盘</a></li>' +
             '<li><a href="dashboard.html">数据看板</a></li>' +
           '</ul></div>' +
