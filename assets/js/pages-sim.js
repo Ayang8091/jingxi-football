@@ -9,7 +9,7 @@
    规则：
      · 同一场比赛的不同玩法不可互相串联（竞彩规则），因此每串每场只取一条腿；
      · 组合赔率 = 各腿 SP 相乘；联合概率 = 各腿模型概率相乘（独立性近似）；
-     · 赔率区间默认 3~50 倍，可自定义（硬限制 3~50）；
+     · 赔率区间预设 3~50 倍与 50 倍以上，结果统一按 EV 降序排列；
      · 实时数据模式下推荐明细可能为空，可开启「模型首选补充」生成结构参考腿。
    ========================================================================== */
 (function (global) {
@@ -20,7 +20,7 @@
   var pickProb = global.JX.pickProb;
 
   var STORE_KEY = 'jx.sim.v1';
-  var LO_MIN = 3, HI_MAX = 50;
+  var LO_MIN = 3, HI_CAP = 9999;   // HI_CAP=9999 表示不设上限（50 倍以上/全部）
 
   var state = {
     day: 'today',
@@ -45,8 +45,8 @@
     { k: 'had', l: '胜平负组合', plays: ['胜平负'], desc: '每串全部由「胜平负」推荐构成' },
     { k: 'hhad', l: '让球胜平负组合', plays: ['让球胜平负'], desc: '每串全部由「让球胜平负」推荐构成' },
     { k: 'ttg', l: '总进球组合', plays: ['总进球'], desc: '每串全部由「总进球」推荐构成' },
-    { k: 'mix3', l: '三种混合组合', plays: ['胜平负', '让球胜平负', '总进球'], desc: '三种玩法混合，按联合概率从高到低排序' },
-    { k: 'oddsMix', l: '按赔率混合组合', plays: ['胜平负', '让球胜平负', '总进球'], desc: '不限玩法，以组合赔率落在所选区间为核心，区间内按 EV 排序' }
+    { k: 'mix3', l: '三种混合组合', plays: ['胜平负', '让球胜平负', '总进球'], desc: '三种玩法混合，按期望值 EV 从高到低排序' },
+    { k: 'oddsMix', l: '按赔率混合组合', plays: ['胜平负', '让球胜平负', '总进球'], desc: '不限玩法，以组合赔率落在所选区间为核心，按 EV 排序' }
   ];
   function comboOf() { return COMBOS.filter(function (c) { return c.k === state.combo; })[0] || COMBOS[0]; }
 
@@ -138,17 +138,14 @@
     if (!host) return;
     var cfg = comboOf();
     var groups = buildMatchLegs();
-    var lo = Math.max(LO_MIN, Math.min(state.oddsMin, HI_MAX));
-    var hi = Math.max(LO_MIN, Math.min(state.oddsMax, HI_MAX));
+    var lo = Math.max(LO_MIN, Math.min(state.oddsMin, HI_CAP));
+    var hi = Math.max(LO_MIN, Math.min(state.oddsMax, HI_CAP));
     if (hi < lo) hi = lo;
 
     var legTotal = groups.reduce(function (s, g) { return s + g.legs.length; }, 0);
     var combos = groups.length >= state.k ? enumerate(groups, state.k, lo, hi) : [];
-    if (state.combo === 'oddsMix') {
-      combos.sort(function (a, b) { return evOf(b) - evOf(a); });
-    } else {
-      combos.sort(function (a, b) { return b.p - a.p; });
-    }
+    /* 统一按 EV 从大到小排列 */
+    combos.sort(function (a, b) { return evOf(b) - evOf(a); });
     var shown = combos.slice(0, 15);
     lastSim = { cfg: cfg, k: state.k, dayL: DAY_L[state.day] || state.day, groups: groups, legTotal: legTotal, combos: combos, shown: shown, lo: lo, hi: hi };
 
@@ -162,20 +159,30 @@
 
   function evOf(c) { return c.p * c.sp - 1; }
 
+  function rangeLabel(lo, hi) {
+    if (hi >= HI_CAP) return lo <= LO_MIN ? '全部（3 倍以上）' : lo + ' 倍以上';
+    return lo + '~' + hi + ' 倍';
+  }
+
   function head(cfg) {
     return '<div class="pagehead"><div class="wrap">' +
       '<div class="crumb"><a href="index.html">今日预测</a> / 串关模拟</div>' +
       '<h1>串关模拟 · 按玩法与赔率区间组合</h1>' +
       '<div class="sub">以单场剖析页<b>「推荐明细与仓位建议」</b>的推荐方向为组合依据，' +
       '提供胜平负 / 让球胜平负 / 总进球 / 三种混合 / 按赔率混合五种搭配模式，' +
-      '组合赔率区间 <b>3~50 倍</b>可调。同一场比赛不可重复串联（竞彩规则），' +
+      '组合赔率区间 <b>3 倍以上自由预设（含 50 倍以上）</b>，结果统一按 EV 从高到低排列。' +
+      '同一场比赛不可重复串联（竞彩规则），' +
       '联合概率为各腿模型概率相乘的独立性近似。<b>模拟结果为结构参考，不是盈利承诺。</b></div>' +
       '</div></div>';
   }
 
   function controls(cfg) {
     var days = [{ k: 'today', l: '今日' }, { k: 'tomorrow', l: '明日' }, { k: 'after', l: '后天' }];
-    var presets = [[3, 5], [5, 8], [8, 15], [15, 25], [25, 50], [3, 50]];
+    var presets = [[3, 5], [5, 8], [8, 15], [15, 25], [25, 50], [50, HI_CAP], [3, HI_CAP]];
+    function presetLabel(pr) {
+      if (pr[1] >= HI_CAP) return pr[0] <= LO_MIN ? '全部' : pr[0] + '+';
+      return pr[0] + '~' + pr[1];
+    }
     return '<div class="card"><div class="card-h"><h3>模拟参数</h3>' +
       '<span class="tiny muted">调整后立即重算；参数自动保存</span></div><div class="card-b">' +
       '<div class="toolbar" style="margin:0;border:0;padding:0;background:none;flex-wrap:wrap">' +
@@ -190,15 +197,10 @@
         '<div class="field"><label>串关关数</label><div class="seg">' + [2, 3, 4].map(function (n) {
           return '<button data-sk="' + n + '" class="' + (n === state.k ? 'on' : '') + '">' + n + ' 串 1</button>';
         }).join('') + '</div></div>' +
-        '<div class="field"><label>组合赔率区间（3~50 倍）</label><div class="seg">' + presets.map(function (pr) {
+        '<div class="field"><label>组合赔率区间</label><div class="seg">' + presets.map(function (pr) {
           var on = state.oddsMin === pr[0] && state.oddsMax === pr[1];
-          return '<button data-srange="' + pr[0] + '-' + pr[1] + '" class="' + (on ? 'on' : '') + '">' + pr[0] + '~' + pr[1] + '</button>';
+          return '<button data-srange="' + pr[0] + '-' + pr[1] + '" class="' + (on ? 'on' : '') + '">' + presetLabel(pr) + '</button>';
         }).join('') + '</div></div>' +
-        '<div class="field"><label>自定义区间</label><span class="row gap8">' +
-          '<input class="cell-input" id="sim-lo" type="number" min="3" max="50" step="1" value="' + state.oddsMin + '"> ' +
-          '<span class="muted">~</span> ' +
-          '<input class="cell-input" id="sim-hi" type="number" min="3" max="50" step="1" value="' + state.oddsMax + '">' +
-        '</span></div>' +
         '<label class="small" style="display:flex;align-items:center;gap:6px;cursor:pointer">' +
           '<input type="checkbox" id="sim-incl"' + (state.inclModel ? ' checked' : '') + '> 无推荐时用模型首选腿补充</label>' +
       '</div>' +
@@ -217,7 +219,7 @@
     if (groups.length < state.k) {
       body = '<div class="card-b center muted">候选场次不足 ' + state.k + ' 场，无法生成 ' + state.k + ' 串 1 组合。可切换日期、模式，或开启「模型首选补充」。</div>';
     } else if (!combos.length) {
-      body = '<div class="card-b center muted">在 ' + lo + '~' + hi + ' 倍区间内没有符合条件的组合。可放宽区间或减少关数。</div>';
+      body = '<div class="card-b center muted">在 ' + rangeLabel(lo, hi) + '区间内没有符合条件的组合。可放宽区间或减少关数。</div>';
     } else {
       body = '<div class="card-b flush"><div class="scrollx"><table class="tbl tbl-dense">' +
         '<thead><tr><th>#</th><th>串关明细（' + state.k + ' 腿）</th><th class="num">组合赔率</th>' +
@@ -243,15 +245,14 @@
             '<div><div class="mg-l">候选腿 / 覆盖场次</div><div class="mg-v">' + legTotal + ' 腿 / ' + groups.length + ' 场</div></div>' +
             '<div><div class="mg-l">区间内组合数</div><div class="mg-v">' + combos.length.toLocaleString('en-US') + '</div></div>' +
             '<div><div class="mg-l">最高组合赔率</div><div class="mg-v">' + U.odds(combos[0].sp) + '</div></div>' +
-            '<div><div class="mg-l">展示</div><div class="mg-v">前 ' + shown.length + ' 组（' +
-              (state.combo === 'oddsMix' ? 'EV 降序' : '联合概率降序') + '）</div></div>' +
+            '<div><div class="mg-l">展示</div><div class="mg-v">前 ' + shown.length + ' 组（EV 降序）</div></div>' +
           '</div>' +
           '<p class="tiny muted mt8 mb0">组合赔率 = 各腿 SP 相乘；联合概率 = 各腿模型概率相乘（假设独立，同联赛/同时段开赛存在正相关，实际命中率通常低于估算）。' +
           'EV = 联合概率 × 组合赔率 − 1，为负代表该组合在当前水位下长期期望亏损。</p>' +
         '</div></div>';
     }
     return '<div class="card mt16"><div class="card-h"><h2>模拟结果 · ' + U.esc(cfg.l) + '</h2>' +
-      '<span class="hint">' + state.k + ' 串 1 · 组合赔率 ' + lo + '~' + hi + ' 倍</span>' +
+      '<span class="hint">' + state.k + ' 串 1 · 组合赔率 ' + rangeLabel(lo, hi) + ' · EV 降序</span>' +
       (combos.length ? '<button class="btn-ghost" data-simexport style="margin-left:12px">导出结果图片（PNG 长图）</button>' : '') +
       '</div>' + body + '</div>';
   }
@@ -398,11 +399,11 @@
     ink('#ffffff'); sf(38, 700);
     ctx.fillText(fit(ctx, S.cfg.l + ' · ' + S.k + ' 串 1', W - PAD * 2 - 220), PAD, 96);
     sf(26, 700); ink(EX.accent);
-    var tagTxt = '组合赔率 ' + S.lo + '~' + S.hi + ' 倍';
+    var tagTxt = '组合赔率 ' + rangeLabel(S.lo, S.hi);
     ctx.fillText(tagTxt, W - PAD - ctx.measureText(tagTxt).width, 60);
     ink('rgba(255,255,255,.78)'); sf(15, 400);
-    ctx.fillText('日期：' + (S.dayL || state.day) + '　·　排序：' +
-      (S.cfg.k === 'oddsMix' ? 'EV 降序' : '联合概率降序') + '　·　生成时间：' + nowStr2(), PAD, 138);
+    ctx.fillText('日期：' + (S.dayL || state.day) + '　·　排序：EV 降序' +
+      '　·　生成时间：' + nowStr2(), PAD, 138);
     ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PAD, 158); ctx.lineTo(W - PAD, 158); ctx.stroke();
     ink('rgba(255,255,255,.6)'); sf(12.5, 400);
@@ -532,16 +533,6 @@
       state.oddsMin = +parts[0]; state.oddsMax = +parts[1];
       save(); renderSim();
     });
-    var lo = U.byId('sim-lo'), hi = U.byId('sim-hi');
-    function applyRange() {
-      var a = +lo.value, b = +hi.value;
-      a = Math.max(LO_MIN, Math.min(HI_MAX, isNaN(a) ? LO_MIN : a));
-      b = Math.max(LO_MIN, Math.min(HI_MAX, isNaN(b) ? HI_MAX : b));
-      state.oddsMin = a; state.oddsMax = b;
-      save(); renderSim();
-    }
-    if (lo) lo.addEventListener('change', applyRange);
-    if (hi) hi.addEventListener('change', applyRange);
     var incl = U.byId('sim-incl');
     if (incl) incl.addEventListener('change', function () { state.inclModel = this.checked; save(); renderSim(); });
     U.on(document, 'click', '[data-simexport]', function () { exportPNG(); });
