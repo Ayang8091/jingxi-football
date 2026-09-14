@@ -129,8 +129,10 @@
       txt.textContent = '实时数据 · 中国体彩网官方接口';
       meta.textContent = '更新 ' + (st.fetchedAt || st.updatedAt || '—') + ' · 可分析 ' + st.count + ' 场';
     } else {
-      txt.textContent = '演示数据（未连接接口）';
-      meta.textContent = st.error ? '接口不可用：' + st.error : '点右侧按钮尝试拉取官方数据';
+      txt.textContent = '演示数据';
+      meta.textContent = st.source === '本地缓存快照（官方接口历史数据）'
+        ? '实时接口暂不可达，已展示上次成功获取的数据'
+        : '实时接口暂不可达，已按演示数据展示 · 点右侧可重试';
     }
     if (pill) {
       pill.innerHTML = st.loading
@@ -155,7 +157,7 @@
       if (r && r.ok) {
         msg('更新成功：' + r.count + ' 场 · 接口数据时间 ' + (r.remoteUpdate || '—') + ' · 耗时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's', 'ok');
       } else {
-        msg('更新失败：' + ((r && r.reason) || '未知原因') + '（继续使用当前数据）', 'err');
+        msg((r && r.reason) || '接口暂时不可达，已保持当前数据展示', 'err');
       }
       renderStatus();
     });

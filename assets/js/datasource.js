@@ -353,41 +353,78 @@
   }
 
   /* ------------------------------------------------------------ 网络请求 */
+  /* 抓取链：直连（两次，其中一次补正 Referer）→ 公共 CORS 中继 → 失败。
+     官方接口本身对任意 Origin 返回 200 且 ACAO:*（实测），用户端失败多为
+     本地网络环境（代理 / 广告拦截 / 运营商间歇阻断），因此多路径重试意义最大。 */
+  var PROXIES = [
+    { name: 'allorigins', wrap: function (u) { return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u); } },
+    { name: 'codetabs', wrap: function (u) { return 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u); } },
+    { name: 'cors.lol', wrap: function (u) { return 'https://api.cors.lol/?url=' + encodeURIComponent(u); } }
+  ];
+
+  function fetchJSON(url, opt, timeoutMs) {
+    var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, timeoutMs || 10000) : null;
+    var o = opt || {};
+    o.method = 'GET';
+    o.mode = 'cors';
+    o.credentials = 'omit';
+    o.cache = 'no-store';
+    o.headers = o.headers || { 'Accept': 'application/json' };
+    if (ctrl) o.signal = ctrl.signal;
+    return fetch(url, o).then(function (r) {
+      if (timer) clearTimeout(timer);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }, function (e) {
+      if (timer) clearTimeout(timer);
+      throw e;
+    });
+  }
+
+  function parsePayload(json) {
+    if (!json || json.success !== true || !json.value) {
+      throw new Error('接口返回异常');
+    }
+    var v = json.value, list = [];
+    (v.matchInfoList || []).forEach(function (day) {
+      (day.subMatchList || []).forEach(function (raw) {
+        if (raw.isHide) return;
+        var m = normalizeMatch(raw, {});
+        if (m) list.push(m);
+      });
+    });
+    if (!list.length) throw new Error('接口未返回可分析赛事');
+    return { matches: list, remoteUpdate: v.lastUpdateTime || '', totalCount: v.totalCount || list.length };
+  }
+
   function fetchRemote() {
     if (typeof fetch !== 'function') {
-      return Promise.reject(new Error('当前运行环境不支持 fetch（离线渲染器/旧浏览器）'));
+      return Promise.reject(new Error('当前运行环境不支持 fetch'));
     }
     var url = API + '?poolCode=' + POOLS + '&channel=c';
     var t0 = Date.now();
-    return fetch(url, {
-      method: 'GET',
-      mode: 'cors',
-      credentials: 'omit',
-      cache: 'no-store',
-      headers: { 'Accept': 'application/json' }
-    }).then(function (r) {
-      state.lastLatency = Date.now() - t0;
-      if (!r.ok) throw new Error('接口返回 HTTP ' + r.status);
-      return r.json();
-    }).then(function (json) {
-      if (!json || json.success !== true || !json.value) {
-        throw new Error('接口返回异常' + (json && json.errorMessage ? '：' + json.errorMessage : ''));
+
+    /* 尝试序列：每个环节失败自动进入下一个 */
+    var attempts = [
+      function () { return fetchJSON(url, null, 10000); },
+      function () { return fetchJSON(url, { referrer: 'https://www.sporttery.cn/' }, 10000); }
+    ];
+    PROXIES.forEach(function (px) {
+      attempts.push(function () { return fetchJSON(px.wrap(url), null, 9000); });
+    });
+
+    function tryAt(i) {
+      if (i >= attempts.length) {
+        return Promise.reject(new Error('所有通道均不可达'));
       }
-      var v = json.value;
-      var list = [];
-      (v.matchInfoList || []).forEach(function (day) {
-        (day.subMatchList || []).forEach(function (raw) {
-          if (raw.isHide) return;
-          var m = normalizeMatch(raw, {});
-          if (m) list.push(m);
-        });
-      });
-      if (!list.length) throw new Error('接口未返回可分析赛事');
-      return {
-        matches: list,
-        remoteUpdate: v.lastUpdateTime || '',
-        totalCount: v.totalCount || list.length
-      };
+      return attempts[i]().then(parsePayload).catch(function () { return tryAt(i + 1); });
+    }
+
+    return tryAt(0).then(function (payload) {
+      state.lastLatency = Date.now() - t0;
+      state.channel = state.channel || '直连';
+      return payload;
     });
   }
 
@@ -484,11 +521,21 @@
       saveCache(payload);
       return { ok: true, count: payload.matches.length, remoteUpdate: payload.remoteUpdate, latency: state.lastLatency };
     }).catch(function (err) {
-      state.error = err && err.message ? err.message : String(err);
+      /* 失败不吓人：优先用「上次成功的实时快照」顶上（不论多旧），
+         实在没有才安静回退到演示数据（即初版形态）。 */
       state.progress = '';
       state.loading = false;
+      state.error = (err && err.message) ? err.message : String(err);
+      var stale = loadCache();
+      if (stale) {
+        apply({ matches: stale.matches, remoteUpdate: stale.remoteUpdate }, { fromCache: true });
+        state.source = '本地缓存快照（官方接口历史数据）';
+        emit();
+        return { ok: false, reason: '接口暂时不可达，已展示上次成功获取的实时数据（' + new Date(stale.t).toLocaleString() + '）' };
+      }
+      revertToDemo('');
       emit();
-      return { ok: false, reason: state.error };
+      return { ok: false, reason: '接口暂时不可达，已切换为演示数据，可稍后重试' };
     }).then(function (res) {
       state.loading = false;
       emit();
@@ -511,7 +558,7 @@
     }
     /* 无论有无缓存，都尝试静默拉一次最新（失败则保持演示/缓存） */
     return DS.refresh().then(function (r) {
-      if (!r.ok && !c) revertToDemo(r.reason);
+      if (!r.ok && !c) revertToDemo('');
       return r;
     });
   };

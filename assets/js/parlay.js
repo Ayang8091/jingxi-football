@@ -93,6 +93,57 @@
   };
 
   /**
+   * 固定投入计划：每期注额恒为 F（不随期号膨胀），逐期命中即赚 F×(赔率−1)。
+   * 与倍投计划的返回结构完全一致（rows / peak / firstStake …），
+   * 因此 P.risk() 可直接复用。
+   * @param {number} E 组合赔率（或逐期赔率数组 opt.oddsArr）
+   * @param {number} F 每期固定投入
+   */
+  P.fixedPlan = function (E, F, N, opt) {
+    opt = opt || {};
+    E = +E; F = Math.max(1, +F || 0); N = Math.max(1, Math.round(+N));
+    if (!(E > 1) || !(F > 0)) return null;
+    var oddsArr = opt.oddsArr || null;
+    var eAt = function (n) {
+      var v = oddsArr && oddsArr[n - 1] !== undefined ? +oddsArr[n - 1] : E;
+      return v > 1 ? v : E;
+    };
+    var cum = +opt.startCum || 0;
+    var rows = [];
+    for (var n = 1; n <= N; n++) {
+      var e = eAt(n);
+      var payout = F * e;
+      var total = cum + F;
+      rows.push({
+        n: n, odds: e, raw: F, stake: F, cum: total,
+        payout: payout, net: payout - total, loss: -total
+      });
+      cum = total;
+    }
+    return {
+      E: E, C: 0, N: N, unit: 2, oddsArr: oddsArr, startCum: +opt.startCum || 0,
+      rows: rows, peak: cum, extraCapital: cum - (+opt.startCum || 0),
+      firstStake: F, lastStake: F, lastNet: rows[N - 1].net, fixed: true
+    };
+  };
+
+  /**
+   * 自动选号：从候选腿池里挑「模型概率最高」的 n 条腿（同一场只取一条）。
+   * 池中每场最多 2 条腿，优先取概率更高的一条，避免同一场占两个名额。
+   */
+  P.autoPick = function (pool, n) {
+    var sorted = pool.slice().sort(function (a, b) { return b.p - a.p; });
+    var out = [], usedMid = {};
+    sorted.forEach(function (l) {
+      if (out.length >= n) return;
+      if (usedMid[l.mid]) return;
+      usedMid[l.mid] = 1; out.push(l);
+    });
+    /* 若不同场次不足 n 场，用次优腿补齐仍是无效串关，故保持不足即可 */
+    return out;
+  };
+
+  /**
    * 倍投风险测算：把"中一次赚多少"扩展成完整的概率分布
    * @param {number} p 单期命中概率（串关的联合概率）
    */
