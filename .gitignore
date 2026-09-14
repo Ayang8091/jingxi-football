@@ -1,0 +1,18 @@
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# 依赖与构建产物
+node_modules/
+dist/
+*.log
+
+# 敏感文件：推送凭据、临时数据快照一律不入库
+.env
+.env.*
+*.pem
+*.key
+credentials.json
