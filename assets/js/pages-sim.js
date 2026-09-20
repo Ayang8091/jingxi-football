@@ -1,16 +1,17 @@
 /* ==========================================================================
    竞析 JINGXI · 串关模拟（主站导航页）
    --------------------------------------------------------------------------
-   定位：以单场剖析页「07 · 推荐明细与仓位建议」的推荐方向为组合依据，
+   定位：以「今日预测」页展示的推荐结果（m.recs：胜平负/让球各 1 条、
+   总进球/半全场各 2 条、比分 3 条，组内按概率降序）为组合依据，
    提供五种搭配模式的串关方案模拟：
      1) 胜平负组合      2) 让球胜平负组合   3) 总进球组合
-     4) 三种混合组合    （三种玩法混合，按联合概率排序）
+     4) 玩法混合组合    （五种玩法混合，与今日预测完全同口径）
      5) 按赔率混合组合  （不限玩法，以组合赔率区间 3~50 倍为核心筛选，区间内按 EV 排序）
    规则：
      · 同一场比赛的不同玩法不可互相串联（竞彩规则），因此每串每场只取一条腿；
-     · 组合赔率 = 各腿 SP 相乘；联合概率 = 各腿模型概率相乘（独立性近似）；
+     · 组合赔率 = 各腿 SP 相乘；联合概率 = 各腿概率相乘（独立性近似）；
      · 赔率区间预设 3~50 倍与 50 倍以上，结果统一按 EV 降序排列；
-     · 实时数据模式下推荐明细可能为空，可开启「模型首选补充」生成结构参考腿。
+     · 某玩法暂无推荐时，可开启「模型首选补充」生成结构参考腿。
    ========================================================================== */
 (function (global) {
   'use strict';
@@ -42,11 +43,11 @@
   function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { } }
 
   var COMBOS = [
-    { k: 'had', l: '胜平负组合', plays: ['胜平负'], desc: '每串全部由「胜平负」推荐构成' },
-    { k: 'hhad', l: '让球胜平负组合', plays: ['让球胜平负'], desc: '每串全部由「让球胜平负」推荐构成' },
-    { k: 'ttg', l: '总进球组合', plays: ['总进球'], desc: '每串全部由「总进球」推荐构成' },
-    { k: 'mix3', l: '三种混合组合', plays: ['胜平负', '让球胜平负', '总进球'], desc: '三种玩法混合，按期望值 EV 从高到低排序' },
-    { k: 'oddsMix', l: '按赔率混合组合', plays: ['胜平负', '让球胜平负', '总进球'], desc: '不限玩法，以组合赔率落在所选区间为核心，按 EV 排序' }
+    { k: 'had', l: '胜平负组合', plays: ['胜平负'], desc: '每串全部由今日预测的「胜平负」推荐构成' },
+    { k: 'hhad', l: '让球胜平负组合', plays: ['让球胜平负'], desc: '每串全部由今日预测的「让球胜平负」推荐构成' },
+    { k: 'ttg', l: '总进球组合', plays: ['总进球'], desc: '每串全部由今日预测的「总进球」推荐构成' },
+    { k: 'mix3', l: '玩法混合组合', plays: ['胜平负', '让球胜平负', '总进球', '半全场', '比分'], desc: '五种玩法混合，与今日预测推荐完全同口径，按 EV 从高到低排序' },
+    { k: 'oddsMix', l: '按赔率混合组合', plays: ['胜平负', '让球胜平负', '总进球', '半全场', '比分'], desc: '不限玩法，以组合赔率落在所选区间为核心，按 EV 排序' }
   ];
   function comboOf() { return COMBOS.filter(function (c) { return c.k === state.combo; })[0] || COMBOS[0]; }
 
@@ -77,25 +78,41 @@
   }
 
   function buildMatchLegs() {
-    /* 返回 [{ mid, no, name, legs:[{play,sel,sp,p,ev,src}] }]，仅限所选日期 */
+    /* 返回 [{ mid, no, name, legs:[{play,sel,sp,p,ev,src}] }]，仅限所选日期。
+       腿池首选「今日预测」的推荐（m.recs，与首页/单场页完全同口径）；
+       演示快照等无 recs 的数据回退到旧 picks + 模型首选腿。 */
     var cfg = comboOf();
     var ms = (D.matches || []).filter(function (m) { return m.day === state.day && m.sp; });
     var out = [];
     ms.forEach(function (m) {
       var legs = [], seen = {};
-      (m.picks || []).forEach(function (pk) {
-        if (cfg.plays.indexOf(pk.play) === -1) return;
-        if (seen[pk.play]) return;
-        var p = pickProb(m, pk);
-        if (!(p > 0) || !(pk.sp > 1)) return;
-        seen[pk.play] = 1;
-        legs.push({ play: pk.play, sel: pk.sel, sp: +pk.sp, p: p, ev: p * pk.sp - 1, src: '推荐明细' });
+      /* 首选：今日预测推荐（recs 已按各玩法概率降序、固定条数输出） */
+      (m.recs || []).forEach(function (rc) {
+        if (cfg.plays.indexOf(rc.play) === -1) return;
+        var key = rc.play + '|' + rc.sel;
+        if (seen[key]) return;
+        if (!(rc.sp > 1) || !(rc.p > 0)) return;   // 比分官方 SP 缺失时无法参与串关，跳过
+        seen[key] = 1;
+        legs.push({ play: rc.play, sel: rc.sel, sp: +rc.sp, p: rc.p, ev: rc.p * rc.sp - 1, src: '今日预测', basis: rc.basis || 'model' });
       });
+      /* 兜底：无 recs（演示快照）—— 旧 picks 逻辑 */
+      if (!legs.length) {
+        (m.picks || []).forEach(function (pk) {
+          if (cfg.plays.indexOf(pk.play) === -1) return;
+          if (seen[pk.play + '|' + pk.sel]) return;
+          var p = pickProb(m, pk);
+          if (!(p > 0) || !(pk.sp > 1)) return;
+          seen[pk.play + '|' + pk.sel] = 1;
+          legs.push({ play: pk.play, sel: pk.sel, sp: +pk.sp, p: p, ev: p * pk.sp - 1, src: '演示推荐' });
+        });
+      }
+      /* 可选：某玩法仍无腿时，用模型首选方向补「结构参考」腿 */
       if (state.inclModel) {
         cfg.plays.forEach(function (pl) {
-          if (seen[pl]) return;
+          var has = legs.some(function (lg) { return lg.play === pl; });
+          if (has) return;
           var lg = modelFirstLeg(m, pl);
-          if (lg) { legs.push(lg); seen[pl] = 1; }
+          if (lg) { legs.push(lg); }
         });
       }
       if (legs.length) {
@@ -168,11 +185,12 @@
     return '<div class="pagehead"><div class="wrap">' +
       '<div class="crumb"><a href="index.html">今日预测</a> / 串关模拟</div>' +
       '<h1>串关模拟 · 按玩法与赔率区间组合</h1>' +
-      '<div class="sub">以单场剖析页<b>「推荐明细与仓位建议」</b>的推荐方向为组合依据，' +
-      '提供胜平负 / 让球胜平负 / 总进球 / 三种混合 / 按赔率混合五种搭配模式，' +
+      '<div class="sub">以<b>「今日预测」页展示的推荐结果</b>为组合依据' +
+      '（胜平负 / 让球各 1 条、总进球 / 半全场各 2 条、比分 3 条，与首页完全同口径），' +
+      '提供胜平负 / 让球胜平负 / 总进球 / 玩法混合 / 按赔率混合五种搭配模式，' +
       '组合赔率区间 <b>3 倍以上自由预设（含 50 倍以上）</b>，结果统一按 EV 从高到低排列。' +
       '同一场比赛不可重复串联（竞彩规则），' +
-      '联合概率为各腿模型概率相乘的独立性近似。<b>模拟结果为结构参考，不是盈利承诺。</b></div>' +
+      '联合概率为各腿概率相乘的独立性近似。<b>模拟结果为结构参考，不是盈利承诺。</b></div>' +
       '</div></div>';
   }
 
@@ -205,7 +223,7 @@
           '<input type="checkbox" id="sim-incl"' + (state.inclModel ? ' checked' : '') + '> 无推荐时用模型首选腿补充</label>' +
       '</div>' +
       '<div class="tiny muted mt16">当前模式：<b>' + U.esc(cfg.l) + '</b> — ' + U.esc(cfg.desc) + '。' +
-      '实时模式下若推荐明细为空（无正 EV 方向），开启「模型首选补充」后按各玩法模型概率最高的方向生成结构参考腿。</div>' +
+      '腿池即「今日预测」的推荐结果；若某玩法暂无推荐，开启「模型首选补充」后按该玩法模型概率最高的方向生成结构参考腿。</div>' +
       '</div></div>';
   }
 
@@ -225,7 +243,7 @@
         '<thead><tr><th>#</th><th>串关明细（' + state.k + ' 腿）</th><th class="num">组合赔率</th>' +
         '<th class="num">联合概率</th><th class="num">公平赔率</th><th class="num">EV</th><th>依据</th></tr></thead><tbody>' +
         shown.map(function (c, i) {
-          var allRec = c.legs.every(function (x) { return x.leg.src === '推荐明细'; });
+          var allRec = c.legs.every(function (x) { return x.leg.src === '今日预测' || x.leg.src === '演示推荐'; });
           var ev = evOf(c);
           return '<tr>' +
             '<td><b>' + (i + 1) + '</b></td>' +
@@ -236,7 +254,7 @@
             '<td class="num"><b>' + U.pct(c.p, 2) + '</b></td>' +
             '<td class="num muted">' + U.num(1 / c.p, 2) + '</td>' +
             '<td class="num ' + (ev >= 0 ? 'pos' : 'neg') + '"><b>' + U.signed(ev, 1) + '</b></td>' +
-            '<td>' + (allRec ? '<span class="tag t-win">推荐明细依据</span>' : '<span class="tag t-brand">含模型首选</span>') + '</td>' +
+            '<td>' + (allRec ? '<span class="tag t-win">今日预测依据</span>' : '<span class="tag t-brand">含模型首选</span>') + '</td>' +
             '</tr>';
         }).join('') +
         '</tbody></table></div>' +
@@ -341,7 +359,7 @@
       return {
         rank: 0,
         odds: c.sp, p: c.p, fair: 1 / c.p, ev: evOf(c),
-        src: c.legs.every(function (x) { return x.leg.src === '推荐明细'; }) ? '推荐明细依据' : '含模型首选',
+        src: c.legs.every(function (x) { return x.leg.src === '今日预测' || x.leg.src === '演示推荐'; }) ? '今日预测依据' : '含模型首选',
         legs: c.legs.map(function (x) {
           return { no: x.g.no, name: x.g.name, play: x.leg.play, sel: x.leg.sel, sp: x.leg.sp };
         })
@@ -407,7 +425,7 @@
     ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PAD, 158); ctx.lineTo(W - PAD, 158); ctx.stroke();
     ink('rgba(255,255,255,.6)'); sf(12.5, 400);
-    ctx.fillText('联合概率 = 各腿模型概率相乘（独立性近似）；EV = 联合概率 × 组合赔率 − 1。模拟为结构参考，不构成任何盈利承诺。', PAD, 180);
+    ctx.fillText('联合概率 = 各腿概率相乘（独立性近似；半全场为官方赔率隐含概率口径）；EV = 联合概率 × 组合赔率 − 1。模拟为结构参考，不构成任何盈利承诺。', PAD, 180);
 
     /* ---------- KPI 行 ---------- */
     var y = HEAD_H + KPI_TOP;
@@ -438,7 +456,7 @@
       /* 右侧统计列 */
       var sx = CARD_X + CARD_W - IN, sw = STATS_W;
       var ty = y + IN + 8;
-      ink(it.src === '推荐明细依据' ? EX.neg : EX.brand); sf(11.5, 600);
+      ink(it.src === '今日预测依据' ? EX.neg : EX.brand); sf(11.5, 600);
       var tag = '· ' + it.src;
       ctx.fillText(tag, sx - ctx.measureText(tag).width, ty); ty += 34;
       ink(EX.brand); sf(34, 800);
