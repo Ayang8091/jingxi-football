@@ -50,7 +50,7 @@
 
     /* 单场剖析页：未指定 id 时默认展开信心最高的一场 */
     if (page === 'match' && !U.qs('id')) {
-      var ms = (global.JX_DATA.matches || []).filter(function (m) { return m.sp; });
+      var ms = (global.JX_DATA.matches || []).slice();
       var best = ms.sort(function (a, b) { return (b.conf || 0) - (a.conf || 0); })[0];
       if (best) { try { history.replaceState(null, '', '?id=' + best.id); } catch (e) { } }
     }

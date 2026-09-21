@@ -21,7 +21,7 @@
   function renderMatch() {
     var id = U.qs('id');
     var m = D.matches.filter(function (x) { return x.id === id; })[0] ||
-      D.matches.filter(function (x) { return x.day === 'today' && x.sp; })[0] || D.matches[0];
+      D.matches.filter(function (x) { return x.day === 'today'; })[0] || D.matches[0];
     if (!m) { U.byId('match-body').innerHTML = '<div class="wrap" style="padding:40px 20px"><div class="callout c-warn"><h4>暂无可分析的赛事</h4><p class="small mb0">请点顶部「数据更新」拉取最新赛程。</p></div></div>'; return; }
     var r = global.JX.model(m);
     var mk = r.sp;
@@ -69,12 +69,14 @@
         '<div class="grid-2">' +
           '<div>' +
             '<div class="tri mb8">' +
-              triCell('主胜', r.w, M.fairOdds(r.w), m.sp.w, mk.w, r.w >= r.d && r.w >= r.l) +
-              triCell('平局', r.d, M.fairOdds(r.d), m.sp.d, mk.d, r.d > r.w && r.d >= r.l) +
-              triCell('客胜', r.l, M.fairOdds(r.l), m.sp.l, mk.l, r.l > r.w && r.l > r.d) +
+              triCell('主胜', r.w, M.fairOdds(r.w), m.sp ? m.sp.w : null, mk ? mk.w : null, r.w >= r.d && r.w >= r.l) +
+              triCell('平局', r.d, M.fairOdds(r.d), m.sp ? m.sp.d : null, mk ? mk.d : null, r.d > r.w && r.d >= r.l) +
+              triCell('客胜', r.l, M.fairOdds(r.l), m.sp ? m.sp.l : null, mk ? mk.l : null, r.l > r.w && r.l > r.d) +
             '</div>' +
             C.pbar({ w: r.w, d: r.d, l: r.l }, 10) +
-            '<p class="small muted mt8 mb0">上排为模型概率，下排为竞彩官方 SP 及其去水隐含概率。模型概率高于隐含概率即为正向价值。</p>' +
+            '<p class="small muted mt8 mb0">' + (m.sp
+              ? '上排为模型概率，下排为竞彩官方 SP 及其去水隐含概率。模型概率高于隐含概率即为正向价值。'
+              : '本场官方<b>未开售胜平负</b>（仅开让球 / 总进球等玩法），故仅展示模型概率与公平赔率；推荐见下方各玩法明细。') + '</p>' +
           '</div>' +
           '<div>' +
             '<div class="callout c-gold mb8"><h4>本场推荐（按概率从高到低）</h4>' +
@@ -102,13 +104,14 @@
 
   function triCell(lab, p, fair, sp, imp, hl) {
     var cls = lab === '主胜' ? 'c-w' : (lab === '平局' ? 'c-d' : 'c-l');
-    var arrow = p - imp > 0.005 ? ' ▲' : (imp - p > 0.005 ? ' ▼' : ' =');
-    var ac = p - imp > 0.005 ? 'var(--win)' : (imp - p > 0.005 ? 'var(--lose)' : 'var(--ink-3)');
+    var hasSp = sp !== null && sp !== undefined && isFinite(sp) && imp !== null && imp !== undefined;
+    var arrow = !hasSp ? '' : (p - imp > 0.005 ? ' ▲' : (imp - p > 0.005 ? ' ▼' : ' ='));
+    var ac = !hasSp ? 'var(--ink-3)' : (p - imp > 0.005 ? 'var(--win)' : (imp - p > 0.005 ? 'var(--lose)' : 'var(--ink-3)'));
     return '<div class="' + (hl ? 'hl' : '') + '">' +
       '<div class="t-lab">' + lab + '</div>' +
       '<div class="t-val ' + cls + '">' + U.pct(p, 1) + '</div>' +
-      '<div class="t-odds">公平 ' + U.num(fair, 2) + ' · SP ' + U.odds(sp) + '</div>' +
-      '<div class="t-odds" style="color:' + ac + ';font-weight:700">' + U.pct(imp, 1) + arrow + '</div>' +
+      '<div class="t-odds">公平 ' + U.num(fair, 2) + (hasSp ? ' · SP ' + U.odds(sp) : ' · 未开售') + '</div>' +
+      (hasSp ? '<div class="t-odds" style="color:' + ac + ';font-weight:700">' + U.pct(imp, 1) + arrow + '</div>' : '') +
       '</div>';
   }
 
@@ -417,16 +420,17 @@
             '<tr><td class="muted">水位走向</td><td class="num"><span class="tag ' + (m.ou.dir === 'up' ? 't-win' : m.ou.dir === 'down' ? 't-lose' : '') + '">' + U.esc(m.ou.move) + '</span></td></tr>' +
             '<tr><td class="muted">市场成交量分布</td><td class="num">主 ' + m.volume.w + '% · 平 ' + m.volume.d + '% · 客 ' + m.volume.l + '%</td></tr>' +
             '<tr><td class="muted">价值指数（SP × 模型概率，&gt;1 即有正期望）</td><td class="num">' +
-              [r.w * m.sp.w, r.d * m.sp.d, r.l * m.sp.l].map(function (v, i) {
+              (m.sp ? [r.w * m.sp.w, r.d * m.sp.d, r.l * m.sp.l].map(function (v, i) {
                 return '<b style="color:' + (v > 1 ? 'var(--win)' : 'var(--ink-3)') + '">' + U.num(v, 3) + '</b>';
-              }).join(' / ') + '</td></tr>' +
+              }).join(' / ') : na('本场未开售胜平负')) + '</td></tr>' +
           '</tbody></table>' +
           '<div class="callout small mt16"><h4>两个指标怎么读</h4>' +
             '<p><b>欧赔隐含概率变化</b>：初赔 → 终赔的隐含概率移动，反映市场资金的真实方向。' +
             '主胜隐含概率上升，说明市场在向主队集中。</p>' +
             '<p class="mb0"><b>价值指数 = SP × 模型概率</b>。大于 1 代表该档位对本模型而言存在正期望；' +
-            '本场为 ' + U.num(r.w * m.sp.w, 3) + ' / ' + U.num(r.d * m.sp.d, 3) + ' / ' + U.num(r.l * m.sp.l, 3) + '，' +
-            '明显大于 1 的档位即为推荐来源。这个指标与最终 EV 完全一致，不是独立口径。</p></div>' +
+            (m.sp ? '本场为 ' + U.num(r.w * m.sp.w, 3) + ' / ' + U.num(r.d * m.sp.d, 3) + ' / ' + U.num(r.l * m.sp.l, 3) + '，' +
+              '明显大于 1 的档位即为推荐来源。' : '本场未开售胜平负，该项不适用。') +
+            '这个指标与最终 EV 完全一致，不是独立口径。</p></div>' +
         '</div>' +
       '</div>'
     );

@@ -185,7 +185,10 @@
     var r = global.JX.model(m);
     var pl = pick.play;
     if (pl === '胜平负') return pick.sel.indexOf('主胜') === 0 ? r.w : (pick.sel.indexOf('平') === 0 ? r.d : r.l);
-    if (pl === '让球胜平负') return pick.sel.indexOf('让胜') === 0 ? r.rq.w : (pick.sel.indexOf('让平') === 0 ? r.rq.d : r.rq.l);
+    if (pl === '让球胜平负') {
+      if (!r.rq) return 0;
+      return pick.sel.indexOf('让胜') === 0 ? r.rq.w : (pick.sel.indexOf('让平') === 0 ? r.rq.d : r.rq.l);
+    }
     if (pl === '总进球') {
       /* 竞彩总进球玩法为「猜进球总数」：0 / 1 / 2 / 3 / 4 / 5 / 6 / 7+ */
       var mt = pick.sel.match(/(\d+)\s*\+?/);
@@ -210,7 +213,7 @@
     var p = pickProb(m, pick);
     var mk = marketOf(m);
     var mkP = null;
-    if (pick.play === '胜平负') mkP = pick.sel.indexOf('主胜') === 0 ? mk.w : (pick.sel.indexOf('平') === 0 ? mk.d : mk.l);
+    if (pick.play === '胜平负' && mk) mkP = pick.sel.indexOf('主胜') === 0 ? mk.w : (pick.sel.indexOf('平') === 0 ? mk.d : mk.l);
     var ev = M.ev(p, pick.sp);
     var k = M.kelly(p, pick.sp);
     var stake = Math.min(Math.max(0, k * D.model.params.kellyFraction), D.model.params.maxPerMatch) * 100;
@@ -700,10 +703,14 @@
     var recs = m.recs || [];
     var best = recs.slice().sort(function (a, b) { return b.p - a.p; })[0];
     var mk = r.sp;
-    /* 只高亮"存在正期望"的那一档；三档全为负则不highlight，避免误导 */
-    var evs = [r.w * m.sp.w - 1, r.d * m.sp.d - 1, r.l * m.sp.l - 1];
-    var top = evs[0] >= evs[1] && evs[0] >= evs[2] ? 0 : (evs[1] >= evs[2] ? 1 : 2);
-    var hi = evs[top] > 0 ? ['w', 'd', 'l'][top] : '';
+    /* 只高亮"存在正期望"的那一档；三档全为负则不highlight，避免误导。
+       部分场次官方未开胜平负盘口（只有让球/总进球），此时不展示胜平负三档。 */
+    var hi = '';
+    if (m.sp && mk) {
+      var evs = [r.w * m.sp.w - 1, r.d * m.sp.d - 1, r.l * m.sp.l - 1];
+      var top = evs[0] >= evs[1] && evs[0] >= evs[2] ? 0 : (evs[1] >= evs[2] ? 1 : 2);
+      hi = evs[top] > 0 ? ['w', 'd', 'l'][top] : '';
+    }
 
     var lg = D.leagues.filter(function (l) { return l.name === m.league; })[0];
 
@@ -728,9 +735,11 @@
         '<div class="row between tiny muted"><span>公平赔率</span><span class="num">' + U.num(M.fairOdds(r.w), 2) + ' / ' + U.num(M.fairOdds(r.d), 2) + ' / ' + U.num(M.fairOdds(r.l), 2) + '</span></div>' +
       '</div>' +
       '<div class="m-odds">' +
-        oddsCell('胜', m.sp.w, mk.w, hi === 'w') +
-        oddsCell('平', m.sp.d, mk.d, hi === 'd') +
-        oddsCell('负', m.sp.l, mk.l, hi === 'l') +
+        (m.sp
+          ? oddsCell('胜', m.sp.w, mk.w, hi === 'w') +
+            oddsCell('平', m.sp.d, mk.d, hi === 'd') +
+            oddsCell('负', m.sp.l, mk.l, hi === 'l')
+          : '<div class="tiny muted" style="text-align:center;padding:6px 0">未开售<br><b>胜平负</b></div>') +
       '</div>' +
       '<div class="m-side">' +
         (best

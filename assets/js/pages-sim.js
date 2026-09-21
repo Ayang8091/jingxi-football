@@ -74,12 +74,13 @@
     /* 推荐明细缺该玩法时，用模型首选方向补一条「结构参考」腿 */
     var r = JX.model(m), cands = [], i;
     if (play === '胜平负') {
+      if (!m.sp) return null;                     // 官方未开售胜平负的场次，无法构造该玩法腿
       cands = [
         { sel: '主胜', sp: m.sp.w, p: r.w },
         { sel: '平局', sp: m.sp.d, p: r.d },
         { sel: '客胜', sp: m.sp.l, p: r.l }
       ];
-    } else if (play === '让球胜平负' && m.rq && isFinite(m.rq.line)) {
+    } else if (play === '让球胜平负' && m.rq && isFinite(m.rq.line) && r.rq) {
       cands = [
         { sel: '让胜', sp: m.rq.w, p: r.rq.w },
         { sel: '让平', sp: m.rq.d, p: r.rq.d },
@@ -100,7 +101,9 @@
        腿池首选「今日预测」的推荐（m.recs，与首页/单场页完全同口径）；
        演示快照等无 recs 的数据回退到旧 picks + 模型首选腿。 */
     var cfg = comboOf();
-    var ms = (D.matches || []).filter(function (m) { return m.day === state.day && m.sp; });
+    var ms = (D.matches || []).filter(function (m) {
+      return m.day === state.day && (m.sp || (m.recs && m.recs.length) || (m.picks && m.picks.length));
+    });
     var out = [];
     ms.forEach(function (m) {
       var legs = [], seen = {};

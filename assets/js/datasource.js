@@ -30,6 +30,7 @@
 
   var API = 'https://webapi.sporttery.cn/gateway/jc/football/getMatchCalculatorV1.qry';
   var POOLS = 'hhad,had,ttg,crs,hafu';
+  var SNAPSHOT_URL = 'api/snapshot.json';   // 站点内置官方数据快照（同源，随站点发布）
   var CACHE_KEY = 'jx.ds.cache.v2';
   var CACHE_TTL = 6 * 60 * 60 * 1000;   // 6 小时内视为新鲜，先渲染再后台校准
 
@@ -313,13 +314,25 @@
   function normalizeMatch(raw, meta) {
     var had = raw.had || {}, hhad = raw.hhad || {};
     var sp = (had.h && had.d && had.a) ? { w: +had.h, d: +had.d, l: +had.a } : null;
-    if (!sp) return null;                                  // 无胜平负赔率则不可分析
 
     var hasRq = hhad.h && hhad.d && hhad.a && hhad.goalLine !== '' && hhad.goalLine !== undefined && hhad.goalLine !== null;
-    var rqLine = hasRq ? parseFloat(hhad.goalLine) : -1;
+    var rqLine = hasRq ? parseFloat(hhad.goalLine) : null;
+
+    /* 官方对部分场次只开「让球 / 总进球」等玩法（如女足、杯赛），不开胜平负。
+       这类场次同样可以分析：用让球盘 + 总进球盘反解 λ，只是不产出胜平负推荐。
+       只有连一个可用盘口都没有时才丢弃。 */
+    var ttgCount = 0;
+    for (var ti = 0; ti <= 7; ti++) {
+      var tOdds = (raw.ttg || {})['s' + ti];
+      if (tOdds !== undefined && tOdds !== null && tOdds !== '' && +tOdds > 1) ttgCount++;
+    }
+    if (!sp && !hasRq && ttgCount < 6) return null;
+
     var rq = hasRq
       ? { line: rqLine, w: +hhad.h, d: +hhad.d, l: +hhad.a, label: '让球 ' + (rqLine > 0 ? '+' : '') + rqLine }
-      : { line: rqLine, w: sp.w, d: sp.d, l: sp.l, label: '让球 ' + rqLine + '（接口未提供）' };
+      : (sp
+        ? { line: null, w: sp.w, d: sp.d, l: sp.l, label: '让球（接口未提供）' }
+        : { line: null, w: null, d: null, l: null, label: '让球（接口未提供）' });
 
     var obs = buildObservations(raw);
     var lam = solveLambda(obs);
@@ -381,7 +394,9 @@
       },
       sp: sp,
       rq: rq,
-      euro: { open: { w: sp.w, d: sp.d, l: sp.l }, cur: { w: sp.w, d: sp.d, l: sp.l } },
+      euro: sp
+        ? { open: { w: sp.w, d: sp.d, l: sp.l }, cur: { w: sp.w, d: sp.d, l: sp.l } }
+        : { open: null, cur: null },
       asian: null,
       ou: null,
       volume: null,
@@ -471,6 +486,23 @@
     return { matches: list, remoteUpdate: v.lastUpdateTime || '', totalCount: v.totalCount || list.length };
   }
 
+  /* 站点内置快照：同源静态文件，不依赖任何外部网络。
+     用于「直连 + 中继」全部失败且本地无更新缓存时，仍能展示真实官方数据。 */
+  function fetchSnapshot() {
+    if (typeof fetch !== 'function') return Promise.reject(new Error('不支持 fetch'));
+    return fetch(SNAPSHOT_URL + '?t=' + Date.now(), { cache: 'no-store', credentials: 'omit' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('快照不可用');
+        return r.json();
+      })
+      .then(function (j) {
+        if (!j || !j.payload) throw new Error('快照格式异常');
+        var p = parsePayload(j.payload);
+        p.snapshotAt = j.fetchedAt || j.remoteUpdate || '';
+        return p;
+      });
+  }
+
   function fetchRemote() {
     if (typeof fetch !== 'function') {
       return Promise.reject(new Error('当前运行环境不支持 fetch'));
@@ -533,6 +565,10 @@
     state.updatedAt = payload.remoteUpdate || nowStr();
     state.fetchedAt = nowStr();
     if (opt.fromCache) state.source = '本地缓存快照（来自官方接口）';
+    if (opt.fromSnapshot) {
+      state.source = '站点内置快照（来自官方接口）';
+      state.updatedAt = opt.snapshotAt || state.updatedAt;
+    }
 
     D.meta.dataMode = 'live';
     D.meta.updatedAt = state.updatedAt;
@@ -594,21 +630,37 @@
       saveCache(payload);
       return { ok: true, count: payload.matches.length, remoteUpdate: payload.remoteUpdate, latency: state.lastLatency };
     }).catch(function (err) {
-      /* 失败不吓人：优先用「上次成功的实时快照」顶上（不论多旧），
-         实在没有才安静回退到演示数据（即初版形态）。 */
+      /* 失败不吓人：按「更新鲜优先」取用兜底数据 ——
+         ① 站点内置官方快照（同源，任何网络都能取）
+         ② 本地缓存快照（上次成功的实时数据）
+         都没有才安静回退到演示数据（即初版形态）。 */
       state.progress = '';
       state.loading = false;
       state.error = (err && err.message) ? err.message : String(err);
       var stale = loadCache();
-      if (stale) {
-        apply({ matches: stale.matches, remoteUpdate: stale.remoteUpdate }, { fromCache: true });
-        state.source = '本地缓存快照（官方接口历史数据）';
+      return fetchSnapshot().then(function (snap) {
+        var snapT = snap.snapshotAt ? Date.parse(String(snap.snapshotAt).replace(/-/g, '/')) : 0;
+        if (stale && stale.t && snapT && stale.t > snapT) {
+          /* 本机缓存比内置快照更新，优先用缓存 */
+          apply({ matches: stale.matches, remoteUpdate: stale.remoteUpdate }, { fromCache: true });
+          state.source = '本地缓存快照（官方接口历史数据）';
+          emit();
+          return { ok: false, reason: '接口暂时不可达，已展示上次成功获取的实时数据（' + new Date(stale.t).toLocaleString() + '）' };
+        }
+        apply({ matches: snap.matches, remoteUpdate: snap.remoteUpdate }, { fromSnapshot: true, snapshotAt: snap.snapshotAt });
         emit();
-        return { ok: false, reason: '接口暂时不可达，已展示上次成功获取的实时数据（' + new Date(stale.t).toLocaleString() + '）' };
-      }
-      revertToDemo('');
-      emit();
-      return { ok: false, reason: '接口暂时不可达，已切换为演示数据，可稍后重试' };
+        return { ok: false, reason: '接口暂时不可达，已展示站点内置的官方数据快照（' + (snap.snapshotAt || '时间未知') + '）' };
+      }).catch(function () {
+        if (stale) {
+          apply({ matches: stale.matches, remoteUpdate: stale.remoteUpdate }, { fromCache: true });
+          state.source = '本地缓存快照（官方接口历史数据）';
+          emit();
+          return { ok: false, reason: '接口暂时不可达，已展示上次成功获取的实时数据（' + new Date(stale.t).toLocaleString() + '）' };
+        }
+        revertToDemo('');
+        emit();
+        return { ok: false, reason: '接口暂时不可达，已切换为演示数据，可稍后重试' };
+      });
     }).then(function (res) {
       state.loading = false;
       emit();
@@ -629,9 +681,11 @@
       apply({ matches: c.matches, remoteUpdate: c.remoteUpdate }, { fromCache: true });
       state.progress = '';
     }
-    /* 无论有无缓存，都尝试静默拉一次最新（失败则保持演示/缓存） */
+    /* 无论有无缓存，都尝试静默拉一次最新。
+       刷新失败时，refresh 内部已按「内置快照 → 本地缓存 → 演示数据」兜底并打标；
+       只有当最终确实没有任何真实数据可用（仍处演示态）时，才回落标注为演示数据。 */
     return DS.refresh().then(function (r) {
-      if (!r.ok && !c) revertToDemo('');
+      if (!r.ok && !c && state.mode !== 'live') revertToDemo('');
       return r;
     });
   };

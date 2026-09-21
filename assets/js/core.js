@@ -215,10 +215,10 @@
   JX.model = function (m) {
     if (!_cache[m.id]) {
       _cache[m.id] = M.derive(m.lam[0], m.lam[1]);
-      _cache[m.id].market = M.devig(m.euro.cur);
-      _cache[m.id].marketOpen = M.devig(m.euro.open);
-      _cache[m.id].sp = M.devig(m.sp);
-      _cache[m.id].rq = M.handicapProbs(_cache[m.id], m.rq.line);
+      _cache[m.id].market = (m.euro && m.euro.cur) ? M.devig(m.euro.cur) : null;
+      _cache[m.id].marketOpen = (m.euro && m.euro.open) ? M.devig(m.euro.open) : null;
+      _cache[m.id].sp = m.sp ? M.devig(m.sp) : null;
+      _cache[m.id].rq = (m.rq && isFinite(m.rq.line)) ? M.handicapProbs(_cache[m.id], m.rq.line) : null;
     }
     return _cache[m.id];
   };
