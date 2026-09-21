@@ -6,9 +6,10 @@
    提供八种搭配模式的串关方案模拟：
      1) 胜平负组合        2) 让球胜平负组合     3) 总进球组合
      4) 胜平负+让球组合   5) 胜平负+总进球组合  6) 让球+总进球组合
-         （4~6 为双玩法搭配：每串两种玩法各至少一腿；
-           5/6 为「定构成」模式：每注固定 = 1 条其他玩法 + 今日预测的 2 条总进球结果，
-           共 3 腿、关数固定 3 串 1，总进球的两个结果必然同时出现在每一注里）
+         （4~6 为双玩法搭配，配置与算法完全一致：每串两种玩法都要出现，
+           每注里某玩法的腿数 = 该玩法在「今日预测」里的结果数——
+           胜平负/让球各 1 条、总进球/半全场各 2 条，
+           因此 4 = 1+1 = 2 串 1、5/6 = 1+2 = 3 串 1）
      7) 玩法混合组合      （五种玩法混合，与今日预测完全同口径）
      8) 按赔率混合组合    （不限玩法，以组合赔率区间 3~50 倍为核心筛选，区间内按 EV 排序）
    规则：
@@ -53,24 +54,43 @@
     {
       k: 'had_hhad', l: '胜平负+让球组合', plays: ['胜平负', '让球胜平负'],
       req: ['胜平负', '让球胜平负'],
-      desc: '胜平负与让球胜平负搭配，每串两种玩法都要有；两玩法各取今日预测的 1 条推荐作候选腿'
+      desc: '两种玩法同注搭配，每注的腿数按今日预测的结果数来：胜平负 1 条 + 让球胜平负 1 条（2 串 1）'
     },
     {
       k: 'had_ttg', l: '胜平负+总进球组合', plays: ['胜平负', '总进球'],
       req: ['胜平负', '总进球'],
-      comp: { '胜平负': 1, '总进球': 2 }, kFix: 3,
-      desc: '胜平负 1 条 + 今日预测的 2 条总进球结果同注搭配（固定 3 串 1，总进球两结果必然同时出现）'
+      desc: '两种玩法同注搭配，每注的腿数按今日预测的结果数来：胜平负 1 条 + 总进球 2 条（3 串 1）'
     },
     {
       k: 'hhad_ttg', l: '让球+总进球组合', plays: ['让球胜平负', '总进球'],
       req: ['让球胜平负', '总进球'],
-      comp: { '让球胜平负': 1, '总进球': 2 }, kFix: 3,
-      desc: '让球胜平负 1 条 + 今日预测的 2 条总进球结果同注搭配（固定 3 串 1，总进球两结果必然同时出现）'
+      desc: '两种玩法同注搭配，每注的腿数按今日预测的结果数来：让球胜平负 1 条 + 总进球 2 条（3 串 1）'
     },
     { k: 'mix3', l: '玩法混合组合', plays: ['胜平负', '让球胜平负', '总进球', '半全场', '比分'], desc: '五种玩法混合，与今日预测推荐完全同口径，按 EV 从高到低排序' },
     { k: 'oddsMix', l: '按赔率混合组合', plays: ['胜平负', '让球胜平负', '总进球', '半全场', '比分'], desc: '不限玩法，以组合赔率落在所选区间为核心，按 EV 排序' }
   ];
   function comboOf() { return COMBOS.filter(function (c) { return c.k === state.combo; })[0] || COMBOS[0]; }
+
+  /* ------------------------------------------------- 今日预测的各玩法结果数 */
+  /* 与 datasource.buildRecs 完全同口径：胜平负 / 让球胜平负各 1 条、
+     总进球 / 半全场各 2 条、比分 3 条。
+     三个双玩法搭配模式共用这一条规则定构成：每注里某玩法的腿数 =
+     该玩法在「今日预测」里的结果数，关数 = 两者之和
+     （胜平负+让球 = 1+1 = 2 串 1；含总进球的搭配 = 1+2 = 3 串 1）。 */
+  var REC_N = { '胜平负': 1, '让球胜平负': 1, '总进球': 2, '半全场': 2, '比分': 3 };
+  function compOf(cfg) {
+    if (!cfg || !cfg.req || cfg.req.length < 2) return null;
+    var comp = {}, k = 0;
+    cfg.req.forEach(function (p) { var n = REC_N[p] || 1; comp[p] = n; k += n; });
+    return { comp: comp, k: k };
+  }
+  function syncK() {
+    /* 双玩法搭配模式：关数默认落到「今日预测结果数之和」那一档。
+       关数按钮仍保留 2/3/4，手动切换后改为自由搭配（两种玩法都要出现）。 */
+    var cc = compOf(comboOf());
+    if (cc) state.k = cc.k;
+  }
+  syncK();
 
   /* ------------------------------------------------------------ 腿池构建 */
   function modelFirstLeg(m, play) {
@@ -212,18 +232,25 @@
     if (hi < lo) hi = lo;
 
     var legTotal = groups.reduce(function (s, g) { return s + g.legs.length; }, 0);
-    /* 定构成模式（如 胜平负/让球 + 总进球）关数由玩法构成决定，忽略关数设置 */
-    var effK = cfg.kFix || state.k;
-    var combos = groups.length >= effK ? enumerate(groups, effK, lo, hi, cfg.req, cfg.comp) : [];
+    /* 双玩法搭配：关数默认 = 今日预测结果数之和（1+1=2、1+2=3），
+       此时每注严格按该构成过滤；手动切到别的关数则改为自由枚举（两种玩法都要有）。 */
+    var cc = compOf(cfg);
+    var effK = state.k;
+    var useComp = (cc && state.k === cc.k) ? cc.comp : null;
+    var combos = groups.length >= effK ? enumerate(groups, effK, lo, hi, cfg.req, useComp) : [];
     /* 统一按 EV 从大到小排列 */
     combos.sort(function (a, b) { return evOf(b) - evOf(a); });
     var shown = combos.slice(0, 15);
-    lastSim = { cfg: cfg, k: effK, dayL: DAY_L[state.day] || state.day, groups: groups, legTotal: legTotal, combos: combos, shown: shown, lo: lo, hi: hi };
+    lastSim = {
+      cfg: cfg, k: effK, comp: useComp, defK: cc ? cc.k : null,
+      dayL: DAY_L[state.day] || state.day, groups: groups, legTotal: legTotal,
+      combos: combos, shown: shown, lo: lo, hi: hi
+    };
 
     host.innerHTML =
       head(cfg) +
-      controls(cfg) +
-      resultsCard(cfg, groups, legTotal, combos, shown, lo, hi, effK) +
+      controls(cfg, cc) +
+      resultsCard(cfg, groups, legTotal, combos, shown, lo, hi, effK, useComp) +
       mathCard();
     bind();
   }
@@ -242,8 +269,8 @@
       '<div class="sub">以<b>「今日预测」页展示的推荐结果</b>为组合依据' +
       '（胜平负 / 让球各 1 条、总进球 / 半全场各 2 条、比分 3 条，与首页完全同口径），' +
       '提供 8 种搭配模式：胜平负 / 让球胜平负 / 总进球 单一玩法，' +
-      '胜平负+让球 / 胜平负+总进球 / 让球+总进球 双玩法搭配（每串两种玩法都要有；涉及总进球的搭配' +
-      '<b>每注固定 1 条其他玩法 + 今日预测的 2 条总进球结果</b>，即 3 串 1）,' +
+      '胜平负+让球 / 胜平负+总进球 / 让球+总进球 双玩法搭配（每注的腿数按<b>今日预测的结果数</b>搭配：' +
+      '胜平负 1 条 + 让球胜平负 1 条 = 2 串 1，胜平负 / 让球胜平负 1 条 + 总进球 2 条 = 3 串 1），' +
       '以及玩法混合 / 按赔率混合。' +
       '组合赔率区间 <b>3 倍以上自由预设（含 50 倍以上）</b>，结果统一按 EV 从高到低排列。' +
       '同一场比赛不可重复串联（竞彩规则），' +
@@ -251,7 +278,7 @@
       '</div></div>';
   }
 
-  function controls(cfg) {
+  function controls(cfg, cc) {
     var days = [{ k: 'today', l: '今日' }, { k: 'tomorrow', l: '明日' }, { k: 'after', l: '后天' }];
     var presets = [[3, 5], [5, 8], [8, 15], [15, 25], [25, 50], [50, HI_CAP], [3, HI_CAP]];
     function presetLabel(pr) {
@@ -269,11 +296,9 @@
         }).join('') + '</div>' +
       '</div>' +
       '<div class="toolbar mt16" style="margin:0;border:0;padding:0;background:none;flex-wrap:wrap;align-items:flex-end">' +
-        '<div class="field"><label>串关关数</label><div class="seg">' + (cfg.kFix
-          ? '<button class="on" disabled style="cursor:default">' + cfg.kFix + ' 串 1（本模式固定）</button>'
-          : [2, 3, 4].map(function (n) {
-            return '<button data-sk="' + n + '" class="' + (n === state.k ? 'on' : '') + '">' + n + ' 串 1</button>';
-          }).join('')) + '</div></div>' +
+        '<div class="field"><label>串关关数</label><div class="seg">' + [2, 3, 4].map(function (n) {
+          return '<button data-sk="' + n + '" class="' + (n === state.k ? 'on' : '') + '">' + n + ' 串 1</button>';
+        }).join('') + '</div></div>' +
         '<div class="field"><label>组合赔率区间</label><div class="seg">' + presets.map(function (pr) {
           var on = state.oddsMin === pr[0] && state.oddsMax === pr[1];
           return '<button data-srange="' + pr[0] + '-' + pr[1] + '" class="' + (on ? 'on' : '') + '">' + presetLabel(pr) + '</button>';
@@ -282,8 +307,11 @@
           '<input type="checkbox" id="sim-incl"' + (state.inclModel ? ' checked' : '') + '> 无推荐时用模型首选腿补充</label>' +
       '</div>' +
       '<div class="tiny muted mt16">当前模式：<b>' + U.esc(cfg.l) + '</b> — ' + U.esc(cfg.desc) + '。' +
-      (cfg.comp ? '该模式每注构成固定：' + compLabel(cfg.comp) + '，共 ' + cfg.kFix + ' 腿，结果已按此过滤（关数不可调）。' :
-        (cfg.req ? '该模式要求每串同时包含「' + U.esc(cfg.req.join('」与「')) + '」，结果已按此过滤。' : '')) +
+      (cc
+        ? (state.k === cc.k
+          ? '本模式每注按今日预测的结果数配腿：<b>' + compLabel(cc.comp) + '</b>，共 ' + cc.k + ' 腿（' + cc.k + ' 串 1），结果已按此过滤。'
+          : '本模式默认按今日预测的结果数配腿（' + compLabel(cc.comp) + '，' + cc.k + ' 串 1）；当前已手动切到 ' + state.k + ' 串 1，改为自由搭配（只要两种玩法都出现即可）。')
+        : (cfg.req ? '该模式要求每串同时包含「' + U.esc(cfg.req.join('」与「')) + '」，结果已按此过滤。' : '')) +
       '腿池即「今日预测」的推荐结果；若某玩法暂无推荐，开启「模型首选补充」后按该玩法模型概率最高的方向生成结构参考腿。</div>' +
       '</div></div>';
   }
@@ -298,19 +326,18 @@
       '<span class="tiny muted"> ' + U.esc(leg.play) + ' · <b style="color:var(--accent)">' + U.esc(leg.sel) + '</b>@' + U.odds(leg.sp) + '</span>';
   }
 
-  function resultsCard(cfg, groups, legTotal, combos, shown, lo, hi, effK) {
+  function resultsCard(cfg, groups, legTotal, combos, shown, lo, hi, effK, useComp) {
     var k = effK || state.k;
     var body;
     if (groups.length < k) {
       body = '<div class="card-b center muted">候选场次不足 ' + k + ' 场，无法生成 ' + k + ' 串 1 组合。' +
-        (cfg.comp ? '本模式每注为 ' + compLabel(cfg.comp) + '，需要至少 ' + k + ' 场同时具备对应玩法。' : '') +
+        (useComp ? '本模式每注为 ' + compLabel(useComp) + '，需要至少 ' + k + ' 场同时具备对应玩法。' : '') +
         '可切换日期、模式，或开启「模型首选补充」。</div>';
     } else if (!combos.length) {
       body = '<div class="card-b center muted">在 ' + rangeLabel(lo, hi) + '区间内没有符合条件的组合。' +
-        (cfg.comp ? '本模式每注固定为 ' + compLabel(cfg.comp) + '（共 ' + k + ' 腿），' : '') +
-        (cfg.req && !cfg.comp ? '本模式要求每串同时包含「' + cfg.req.join('」与「') + '」，' +
-          (k <= cfg.req.length ? '当前关数刚好等于玩法数，只会生成两种玩法各一腿的搭配；' : '') : '') +
-        '可放宽区间' + (cfg.kFix ? '。' : '或减少关数。') + '</div>';
+        (useComp ? '本模式每注按今日预测结果数配腿为 ' + compLabel(useComp) + '（共 ' + k + ' 腿），' :
+          (cfg.req ? '本模式要求每串同时包含「' + cfg.req.join('」与「') + '」，' : '')) +
+        '可放宽赔率区间' + (useComp ? '。' : '或调整关数。') + '</div>';
     } else {
       body = '<div class="card-b flush"><div class="scrollx"><table class="tbl tbl-dense">' +
         '<thead><tr><th>#</th><th>串关明细（' + k + ' 腿）</th><th class="num">组合赔率</th>' +
@@ -344,7 +371,7 @@
     }
     return '<div class="card mt16"><div class="card-h"><h2>模拟结果 · ' + U.esc(cfg.l) + '</h2>' +
       '<span class="hint">' + k + ' 串 1 · 组合赔率 ' + rangeLabel(lo, hi) + ' · EV 降序' +
-        (cfg.comp ? ' · 每注 ' + compLabel(cfg.comp) : '') + '</span>' +
+        (useComp ? ' · 每注 ' + compLabel(useComp) : '') + '</span>' +
       (combos.length ? '<button class="btn-ghost" data-simexport style="margin-left:12px">导出结果图片（PNG 长图）</button>' : '') +
       '</div>' + body + '</div>';
   }
@@ -495,6 +522,7 @@
     ctx.fillText(tagTxt, W - PAD - ctx.measureText(tagTxt).width, 60);
     ink('rgba(255,255,255,.78)'); sf(15, 400);
     ctx.fillText('日期：' + (S.dayL || state.day) + '　·　排序：EV 降序' +
+      (S.comp ? '　·　每注 ' + compLabel(S.comp) : '') +
       '　·　生成时间：' + nowStr2(), PAD, 138);
     ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PAD, 158); ctx.lineTo(W - PAD, 158); ctx.stroke();
@@ -613,6 +641,7 @@
     U.on(document, 'click', '[data-scombo]', function (e, t) {
       state.combo = t.dataset.scombo;
       U.$$('[data-scombo]').forEach(function (b) { b.classList.toggle('on', b === t); });
+      syncK();                       // 双玩法搭配模式：关数回到「今日预测结果数之和」那一档
       save(); renderSim();
     });
     U.on(document, 'click', '[data-sk]', function (e, t) {
