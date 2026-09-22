@@ -245,6 +245,43 @@ setTimeout(function () {
       return Math.abs(prod - shown) < 0.05;
     })();
   ck('总进球组合：组合赔率 = 各腿腿赔率相乘', combOk);
+  /* 用页面内部结果精确校验赔率/概率口径（JX.simLast） */
+  var S = w.JX.simLast();
+  ck('总进球组合：腿赔率 = 腿内最高 SP（按内部数据）',
+    !!S && S.shown.length > 0 && S.shown.every(function (c) {
+      return c.legs.every(function (lg) {
+        var mx = Math.max.apply(null, lg.legs.map(function (l) { return l.sp; }));
+        return Math.abs(mx - lg.sp) < 1e-9;
+      });
+    }));
+  ck('总进球组合：组合赔率 = 各腿腿赔率相乘（按内部数据）',
+    !!S && S.shown.every(function (c) {
+      return Math.abs(c.legs.reduce(function (a, lg) { return a * lg.sp; }, 1) - c.sp) < 1e-9;
+    }));
+  ck('总进球组合：联合概率 = 各腿腿概率相乘，腿概率 = 腿内各结果概率相加',
+    !!S && S.shown.every(function (c) {
+      var want = c.legs.reduce(function (a, lg) {
+        return a * lg.legs.reduce(function (b, l) { return b + l.p; }, 0);
+      }, 1);
+      return Math.abs(want - c.p) < 1e-9;
+    }));
+  ck('总进球组合：腿概率不再是「腿内各结果概率相乘」',
+    !!S && S.shown.every(function (c) {
+      return c.legs.every(function (lg) {
+        if (lg.legs.length < 2) return true;
+        var prod = lg.legs.reduce(function (b, l) { return b * l.p; }, 1);
+        return Math.abs(prod - lg.p) > 1e-9;
+      });
+    }));
+  var evOk = (function () {
+    var trs = [].slice.call(host().querySelectorAll('table.tbl tbody tr'));
+    return !!S && trs.length > 0 && trs.slice(0, 3).every(function (tr, i) {
+      var cell = Number([].slice.call(tr.querySelectorAll('td'))[5].textContent.replace(/[^\d.\-]/g, ''));
+      var c = S.shown[i];
+      return !!c && Math.abs(cell - (c.p * c.sp - 1) * 100) < 0.15;
+    });
+  })();
+  ck('总进球组合：EV 单元格 = (联合概率 × 组合赔率 − 1) × 100', evOk);
   click('[data-scombo="had"]');
   overallOpt();
   ck('胜平负组合：单结果腿赔率为单个 SP（不带取最高标注）',
