@@ -6,7 +6,7 @@
      · 每场的结果数 = 该场在「今日预测」里的结果数：
        胜平负 / 让球胜平负 1 条，总进球 2 条；
      · 同一场比赛在同一玩法下的多个结果「合并为一条腿」（复式），
-       如「周一001 中国女 vs 菲律宾女 总进球 · 2球、3球」，腿赔率 = 腿内各结果 SP 相乘；
+       如「周一001 中国女 vs 菲律宾女 总进球 · 2球、3球」，腿赔率 = 腿内最高的 SP；
      · 单玩法组合：每场取该玩法全部结果；
      · 双玩法组合：主玩法只占 1 场（1 条），其余（关数-1）场归第二玩法（每场全部结果）。
    于是 2 串 1 的构成是：
@@ -92,17 +92,21 @@ function overallOpt() {                       // 切到「全部」赔率区间�
 }
 
 /* 一条腿的 DOM 文本形如：
-   周一001 中国女 vs 菲律宾女 总进球 · 2球、3球@3.95×4.45=2.58
-   解析出：场次号、玩法、各结果、赔率文本（单结果=SP；多结果=SP 连乘=腿赔率） */
+   周一001 中国女 vs 菲律宾女 总进球 · 2球、3球@3.95（取最高，3.95/4.45）
+   解析出：场次号、玩法、各结果、腿赔率（单结果=SP；多结果=腿内最高 SP） */
 var LEG_RE = /^(\S+)\s+([\s\S]*?)(让球胜平负|胜平负|总进球|半全场|比分)\s*·\s*([^@]+)@(.+)$/;
 function parseLeg(div) {
   var t = div.textContent.replace(/\s+/g, ' ').trim();
   var m = LEG_RE.exec(t);
   if (!m) return null;
+  var oddsTxt = m[5].trim();
+  var mm = /^([\d.]+)（取最高，([\d.]+(?:\/[\d.]+)*)）$/.exec(oddsTxt);
   return {
     no: m[1], play: m[3],
     sels: m[4].trim().split('、'),
-    oddsTxt: m[5].trim(),
+    oddsTxt: oddsTxt,
+    spTxt: mm ? mm[1] : oddsTxt,
+    cands: mm ? mm[2].split('/').map(Number) : [Number(oddsTxt)],
     n: m[4].trim().split('、').length
   };
 }
@@ -224,20 +228,27 @@ setTimeout(function () {
     trows.length > 0 && trows[0].legs.every(function (l) { return l.n === 2; }));
   ck('总进球组合：腿文本形如「… 总进球 · 2球、3球@…」（' + (trows[0] ? trows[0].legs[0].sels.join('、') : '-') + '）',
     !!trows[0] && trows[0].legs[0].sels.length === 2);
-  ck('总进球组合：多结果腿的赔率为连乘式（' + (trows[0] ? trows[0].legs[0].oddsTxt : '-') + '）',
-    !!trows[0] && /×/.test(trows[0].legs[0].oddsTxt) && /=/.test(trows[0].legs[0].oddsTxt));
-  /* 腿赔率 = 腿内各结果 SP 相乘 */
+  ck('总进球组合：多结果腿按「取最高」计价（' + (trows[0] ? trows[0].legs[0].oddsTxt : '-') + '）',
+    !!trows[0] && trows[0].legs.every(function (l) { return /取最高/.test(l.oddsTxt); }));
+  /* 腿赔率 = 腿内各结果 SP 的最高值（不做相乘） */
   var odOk = trows.length > 0 && trows[0].legs.every(function (l) {
-    var parts = l.oddsTxt.split('=');
-    var sps = parts[0].split('×').map(num);
-    var prod = sps.reduce(function (a, b) { return a * b; }, 1);
-    return Math.abs(prod - num(parts[1])) < 0.02;
+    return Math.abs(Math.max.apply(null, l.cands) - Number(l.spTxt)) < 0.02;
   });
-  ck('总进球组合：腿赔率 = 腿内各结果 SP 相乘', odOk);
+  ck('总进球组合：腿赔率 = 腿内最高的 SP', odOk);
+  /* 组合赔率 = 各腿腿赔率相乘 */
+  var combOk = trows.length > 0 && trows[0].legs.every(function () { return true; }) &&
+    (function () {
+      var tr = host().querySelectorAll('table.tbl tbody tr')[0];
+      if (!tr) return false;
+      var shown = Number([].slice.call(tr.querySelectorAll('td'))[2].textContent.replace(/[^\d.]/g, ''));
+      var prod = trows[0].legs.reduce(function (a, l) { return a * Number(l.spTxt); }, 1);
+      return Math.abs(prod - shown) < 0.05;
+    })();
+  ck('总进球组合：组合赔率 = 各腿腿赔率相乘', combOk);
   click('[data-scombo="had"]');
   overallOpt();
-  ck('胜平负组合：单结果腿赔率为单个 SP（无连乘式）',
-    rowLegs().every(function (r) { return r.legs.every(function (l) { return !/×/.test(l.oddsTxt); }); }));
+  ck('胜平负组合：单结果腿赔率为单个 SP（不带取最高标注）',
+    rowLegs().every(function (r) { return r.legs.every(function (l) { return !/取最高/.test(l.oddsTxt); }); }));
 
   console.log('== 5. 混合模式不受影响（每场 1 条腿，关数 = 场数 = 腿数） ==');
   click('[data-scombo="mix3"]');

@@ -16,8 +16,8 @@
      · 关数 = 场数 = 腿数（2 串 1 = 2 场 = 2 腿），每一场的腿数（结果数）按「今日预测」取：
        单玩法组合每场取该玩法全部结果（2 串 1 = 总进球 2 条 + 总进球 2 条）；
        胜平负、让球胜平负每场 1 条；
-     · 同一场比赛在同一玩法下的多个结果「合并为一条腿」（复式）：
-       如「周一001 中国女 vs 菲律宾女 总进球 · 2球、3球」，腿赔率 = 腿内各结果 SP 相乘；
+     · 同一场比赛在同一玩法下的多个结果「合并为一条腿」（复式覆盖）：
+       如「周一001 中国女 vs 菲律宾女 总进球 · 2球、3球」，腿赔率 = 腿内**最高的** SP；
      · 同一场比赛不可重复串联（竞彩规则）；
      · 组合赔率 = 各腿 SP 相乘；联合概率 = 各腿概率相乘（独立性近似）；
      · 赔率区间预设 3~50 倍与 50 倍以上，结果统一按 EV 降序排列；
@@ -250,7 +250,7 @@
        · 单玩法组合：该场取该玩法的全部结果（总进球 2 条 / 胜平负、让球 1 条）
        · 双玩法组合：主玩法固定占 1 场、只取概率最高的 1 条；
                      其余（关数-1）场归第二玩法，每场取该玩法的全部结果
-     同一场的多个结果合并成「一条腿」（复式），腿赔率 = 各结果 SP 相乘。
+     同一场的多个结果合并成「一条腿」（复式覆盖），腿赔率 = 腿内最高的 SP。
      于是 2 串 1 就是：总进球 2 条 + 总进球 2 条（2 腿）／
      胜平负 1 条 + 让球胜平负 1 条（2 腿）／胜平负 1 条 + 总进球 2 条（2 腿）。 */
   function choicesFor(g, cfg, mainUsed) {
@@ -259,8 +259,10 @@
       var ls = g.legs.filter(function (l) { return l.play === play; });
       if (!ls.length) return;
       if (!takeAll) ls = ls.slice(0, 1);          // 主玩法只取概率最高的 1 条
-      var sp = 1, p = 1;
-      ls.forEach(function (l) { sp *= l.sp; p *= l.p; });
+      /* 腿赔率 = 腿内各结果 SP 的**最大值**（同一场同玩法多结果是「覆盖」关系，
+         取最高的一档计价，不做相乘）；腿概率仍为各结果模型概率相乘。 */
+      var sp = 0, p = 1;
+      ls.forEach(function (l) { if (l.sp > sp) sp = l.sp; p *= l.p; });
       out.push({ play: play, legs: ls, sp: sp, p: p, mainUsed: isMain });
     }
     if (cfg.req && cfg.req.length > 1) {
@@ -289,7 +291,7 @@
       for (var j = 0; j < opts.length; j++) {
         var o = opts[j], before = picked.length, sp2 = sp * o.sp, p2 = p * o.p;
         if (sp2 > hi) continue;
-        /* 同一场比赛的多个结果合并为「一条腿」（复式）：腿赔率 = 各结果 SP 相乘 */
+        /* 同一场比赛的多个结果合并为「一条腿」（复式覆盖）：腿赔率取腿内最高 SP */
         picked.push({ g: groups[idx], play: o.play, legs: o.legs, sp: o.sp, p: o.p });
         rec(idx + 1, picked, sp2, p2, mainUsed || o.mainUsed, used + 1);
         picked.length = before;
@@ -352,7 +354,7 @@
       '以及玩法混合 / 按赔率混合。' +
       '<b>串关关数 2 串 1 / 3 串 1 / 4 串 1 = 2 / 3 / 4 场 = 2 / 3 / 4 腿</b>，每一场的腿数（结果数）按<b>今日预测的结果数</b>取：' +
       '胜平负、让球胜平负各 1 条，总进球 2 条。' +
-      '同一场比赛在同一玩法下的多个结果<b>合并为一条腿</b>（复式，如「001 总进球 · 2球、3球」，腿赔率 = 腿内各结果 SP 相乘）。' +
+      '同一场比赛在同一玩法下的多个结果<b>合并为一条腿</b>（复式覆盖，如「001 总进球 · 2球、3球」，腿赔率取腿内最高的 SP）。' +
       '于是 2 串 1 分别是：' +
       '总进球 2 条 + 总进球 2 条；胜平负 1 条 + 让球胜平负 1 条；胜平负 1 条 + 总进球 2 条；让球胜平负 1 条 + 总进球 2 条。' +
       '双玩法组合里主玩法固定占 1 场，其余场归另一玩法。' +
@@ -394,7 +396,7 @@
       (compText(cfg, state.k)
         ? '当前 ' + state.k + ' 串 1（' + state.k + ' 场 = ' + state.k + ' 腿），每注构成：<b>' + U.esc(compText(cfg, state.k)) + '</b>。'
         : '每场从五种玩法里各挑 1 条腿，' + state.k + ' 串 1 = ' + state.k + ' 场 = ' + state.k + ' 腿。') +
-      '同一场比赛在同一玩法下的多个结果<b>合并为一条腿</b>（复式，如「001 总进球 · 2球、3球」，腿内 SP 相乘）。' +
+      '同一场比赛在同一玩法下的多个结果<b>合并为一条腿</b>（复式覆盖，如「001 总进球 · 2球、3球」，腿赔率取腿内最高的 SP）。' +
       '腿池即「今日预测」的推荐结果；若某玩法暂无推荐，开启「模型首选补充」后按该玩法模型概率最高的方向生成结构参考腿。</div>' +
       '</div></div>';
   }
@@ -403,9 +405,11 @@
   function legSels(entry) {
     return entry.legs.map(function (l) { return U.esc(l.sel); }).join('、');
   }
+  /* 腿赔率文本：单结果腿直接给 SP；多结果腿取最高，并把候选档位一并列出 */
   function legOddsTxt(entry) {
     if (entry.legs.length <= 1) return U.odds(entry.sp);
-    return entry.legs.map(function (l) { return U.odds(l.sp); }).join('×') + '=' + U.odds(entry.sp);
+    return U.odds(entry.sp) + '（取最高，' +
+      entry.legs.map(function (l) { return U.odds(l.sp); }).join('/') + '）';
   }
   function legTxt(entry) {
     return '<b>' + U.esc(entry.g.no) + '</b> ' + U.esc(entry.g.name) +
@@ -453,7 +457,7 @@
             '<div><div class="mg-l">最高组合赔率</div><div class="mg-v">' + U.odds(combos[0].sp) + '</div></div>' +
             '<div><div class="mg-l">展示</div><div class="mg-v">前 ' + shown.length + ' 组（EV 降序）</div></div>' +
           '</div>' +
-          '<p class="tiny muted mt8 mb0">同一场比赛在同一玩法下的多个结果<b>合并为一条腿</b>（复式，如「001 总进球 · 2球、3球」），腿内各结果 SP 相乘 = 该腿赔率；' +
+          '<p class="tiny muted mt8 mb0">同一场比赛在同一玩法下的多个结果<b>合并为一条腿</b>（复式覆盖，如「001 总进球 · 2球、3球」），腿赔率 = <b>腿内最高的 SP</b>（同一场的多个结果是覆盖关系，不做相乘）；' +
           '组合赔率 = 各腿赔率相乘；联合概率 = 各腿模型概率相乘（假设独立，同联赛/同时段开赛存在正相关，实际命中率通常低于估算）。' +
           'EV = 联合概率 × 组合赔率 − 1，为负代表该组合在当前水位下长期期望亏损。</p>' +
         '</div></div>';
@@ -558,7 +562,7 @@
             sel: x.legs.map(function (l) { return l.sel; }).join('、'),
             sp: x.sp,
             spTxt: x.legs.length > 1
-              ? x.legs.map(function (l) { return fmtOdds(l.sp); }).join('×') + '=' + fmtOdds(x.sp)
+              ? fmtOdds(x.sp) + '（取最高，' + x.legs.map(function (l) { return fmtOdds(l.sp); }).join('/') + '）'
               : fmtOdds(x.sp)
           };
         })
@@ -625,7 +629,7 @@
     ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PAD, 158); ctx.lineTo(W - PAD, 158); ctx.stroke();
     ink('rgba(255,255,255,.6)'); sf(12.5, 400);
-    ctx.fillText('同一场同玩法的多个结果合并为一条腿（复式，腿内 SP 相乘）；联合概率 = 各腿概率相乘（独立性近似；半全场为官方赔率隐含概率口径）；EV = 联合概率 × 组合赔率 − 1。模拟为结构参考，不构成任何盈利承诺。', PAD, 180);
+    ctx.fillText('同一场同玩法的多个结果合并为一条腿（复式覆盖，腿赔率取腿内最高 SP）；组合赔率 = 各腿赔率相乘；联合概率 = 各腿概率相乘（独立性近似；半全场为官方赔率隐含概率口径）；EV = 联合概率 × 组合赔率 − 1。模拟为结构参考，不构成任何盈利承诺。', PAD, 180);
 
     /* ---------- KPI 行 ---------- */
     var y = HEAD_H + KPI_TOP;
