@@ -13,9 +13,11 @@
      7) 玩法混合组合      （五种玩法混合，与今日预测完全同口径）
      8) 按赔率混合组合    （不限玩法，以组合赔率区间 3~50 倍为核心筛选，区间内按 EV 排序）
    规则：
-     · 关数 = 场数（2 串 1 = 2 场），每一场的腿数按「今日预测」的结果数取：
-       单玩法组合每场取该玩法全部结果（总进球 2 条 = 总进球 2 条 + 总进球 2 条，4 腿）；
+     · 关数 = 场数 = 腿数（2 串 1 = 2 场 = 2 腿），每一场的腿数（结果数）按「今日预测」取：
+       单玩法组合每场取该玩法全部结果（2 串 1 = 总进球 2 条 + 总进球 2 条）；
        胜平负、让球胜平负每场 1 条；
+     · 同一场比赛在同一玩法下的多个结果「合并为一条腿」（复式）：
+       如「周一001 中国女 vs 菲律宾女 总进球 · 2球、3球」，腿赔率 = 腿内各结果 SP 相乘；
      · 同一场比赛不可重复串联（竞彩规则）；
      · 组合赔率 = 各腿 SP 相乘；联合概率 = 各腿概率相乘（独立性近似）；
      · 赔率区间预设 3~50 倍与 50 倍以上，结果统一按 EV 降序排列；
@@ -219,7 +221,14 @@
           }
           for (var t = 0; t < compKeys.length; t++) if ((cnt[compKeys[t]] || 0) !== comp[compKeys[t]]) return;
         }
-        res.push({ legs: chosen.slice(), sp: sp, p: p });
+        /* 每注统一表示为一个「腿」数组：一条腿 = 一场比赛 + 该场该玩法的结果集合。
+           混合模式每场只取 1 条结果，故每条腿只含 1 个结果。 */
+        res.push({
+          legs: chosen.map(function (x) {
+            return { g: x.g, play: x.leg.play, legs: [x.leg], sp: x.leg.sp, p: x.leg.p };
+          }),
+          sp: sp, p: p
+        });
         return;
       }
       if (idx >= groups.length) return;
@@ -237,12 +246,13 @@
   }
 
   /* -------------------------------------------- 组合枚举（按场配腿）
-     关数 = 场数。每一场的腿数由「今日预测」决定：
+     关数 = 场数 = 腿数。每一场的腿数（结果数）由「今日预测」决定：
        · 单玩法组合：该场取该玩法的全部结果（总进球 2 条 / 胜平负、让球 1 条）
        · 双玩法组合：主玩法固定占 1 场、只取概率最高的 1 条；
                      其余（关数-1）场归第二玩法，每场取该玩法的全部结果
-     于是 2 串 1 就是：总进球 2 条 + 总进球 2 条（4 腿）／
-     胜平负 1 条 + 让球胜平负 1 条／胜平负 1 条 + 总进球 2 条。 */
+     同一场的多个结果合并成「一条腿」（复式），腿赔率 = 各结果 SP 相乘。
+     于是 2 串 1 就是：总进球 2 条 + 总进球 2 条（2 腿）／
+     胜平负 1 条 + 让球胜平负 1 条（2 腿）／胜平负 1 条 + 总进球 2 条（2 腿）。 */
   function choicesFor(g, cfg, mainUsed) {
     var out = [];
     function pack(play, takeAll, isMain) {
@@ -251,7 +261,7 @@
       if (!takeAll) ls = ls.slice(0, 1);          // 主玩法只取概率最高的 1 条
       var sp = 1, p = 1;
       ls.forEach(function (l) { sp *= l.sp; p *= l.p; });
-      out.push({ legs: ls, sp: sp, p: p, mainUsed: isMain });
+      out.push({ play: play, legs: ls, sp: sp, p: p, mainUsed: isMain });
     }
     if (cfg.req && cfg.req.length > 1) {
       if (!mainUsed) pack(cfg.req[0], false, true);   // 主玩法最多占 1 场
@@ -279,7 +289,8 @@
       for (var j = 0; j < opts.length; j++) {
         var o = opts[j], before = picked.length, sp2 = sp * o.sp, p2 = p * o.p;
         if (sp2 > hi) continue;
-        o.legs.forEach(function (l) { picked.push({ g: groups[idx], leg: l }); });
+        /* 同一场比赛的多个结果合并为「一条腿」（复式）：腿赔率 = 各结果 SP 相乘 */
+        picked.push({ g: groups[idx], play: o.play, legs: o.legs, sp: o.sp, p: o.p });
         rec(idx + 1, picked, sp2, p2, mainUsed || o.mainUsed, used + 1);
         picked.length = before;
       }
@@ -339,10 +350,12 @@
       '提供 8 种搭配模式：胜平负 / 让球胜平负 / 总进球 单一玩法，' +
       '胜平负+让球 / 胜平负+总进球 / 让球+总进球 双玩法搭配，' +
       '以及玩法混合 / 按赔率混合。' +
-      '<b>串关关数 2 串 1 / 3 串 1 / 4 串 1 = 2 / 3 / 4 场</b>，每一场的腿数按<b>今日预测的结果数</b>取：' +
-      '胜平负、让球胜平负各 1 条，总进球 2 条。于是 2 串 1 分别是：' +
+      '<b>串关关数 2 串 1 / 3 串 1 / 4 串 1 = 2 / 3 / 4 场 = 2 / 3 / 4 腿</b>，每一场的腿数（结果数）按<b>今日预测的结果数</b>取：' +
+      '胜平负、让球胜平负各 1 条，总进球 2 条。' +
+      '同一场比赛在同一玩法下的多个结果<b>合并为一条腿</b>（复式，如「001 总进球 · 2球、3球」，腿赔率 = 腿内各结果 SP 相乘）。' +
+      '于是 2 串 1 分别是：' +
       '总进球 2 条 + 总进球 2 条；胜平负 1 条 + 让球胜平负 1 条；胜平负 1 条 + 总进球 2 条；让球胜平负 1 条 + 总进球 2 条。' +
-      '双玩法综合里主玩法固定占 1 场，其余场归另一玩法。' +
+      '双玩法组合里主玩法固定占 1 场，其余场归另一玩法。' +
       '组合赔率区间 <b>3 倍以上自由预设（含 50 倍以上）</b>，结果统一按 EV 从高到低排列。' +
       '同一场比赛不可重复串联（竞彩规则），' +
       '联合概率为各腿概率相乘的独立性近似。<b>模拟结果为结构参考，不是盈利承诺。</b></div>' +
@@ -379,20 +392,29 @@
       '</div>' +
       '<div class="tiny muted mt16">当前模式：<b>' + U.esc(cfg.l) + '</b> — ' + U.esc(cfg.desc) + '。' +
       (compText(cfg, state.k)
-        ? '当前 ' + state.k + ' 串 1（' + state.k + ' 场），每注构成：<b>' + U.esc(compText(cfg, state.k)) + '</b>。'
+        ? '当前 ' + state.k + ' 串 1（' + state.k + ' 场 = ' + state.k + ' 腿），每注构成：<b>' + U.esc(compText(cfg, state.k)) + '</b>。'
         : '每场从五种玩法里各挑 1 条腿，' + state.k + ' 串 1 = ' + state.k + ' 场 = ' + state.k + ' 腿。') +
+      '同一场比赛在同一玩法下的多个结果<b>合并为一条腿</b>（复式，如「001 总进球 · 2球、3球」，腿内 SP 相乘）。' +
       '腿池即「今日预测」的推荐结果；若某玩法暂无推荐，开启「模型首选补充」后按该玩法模型概率最高的方向生成结构参考腿。</div>' +
       '</div></div>';
   }
 
-  function legTxt(g, leg) {
-    return '<b>' + U.esc(g.no) + '</b> ' + U.esc(g.name) +
-      '<span class="tiny muted"> ' + U.esc(leg.play) + ' · <b style="color:var(--accent)">' + U.esc(leg.sel) + '</b>@' + U.odds(leg.sp) + '</span>';
+  /* 一条腿 = 一场比赛 + 该玩法的若干结果（同场多结果合并展示，如 001 总进球 · 2球、3球） */
+  function legSels(entry) {
+    return entry.legs.map(function (l) { return U.esc(l.sel); }).join('、');
+  }
+  function legOddsTxt(entry) {
+    if (entry.legs.length <= 1) return U.odds(entry.sp);
+    return entry.legs.map(function (l) { return U.odds(l.sp); }).join('×') + '=' + U.odds(entry.sp);
+  }
+  function legTxt(entry) {
+    return '<b>' + U.esc(entry.g.no) + '</b> ' + U.esc(entry.g.name) +
+      '<span class="tiny muted"> ' + U.esc(entry.play) + ' · <b style="color:var(--accent)">' +
+      legSels(entry) + '</b>@' + legOddsTxt(entry) + '</span>';
   }
 
   function resultsCard(cfg, groups, legTotal, combos, shown, lo, hi, k) {
     var ctext = compText(cfg, k);
-    var legsPer = shown.length ? shown[0].legs.length : 0;
     var body;
     if (groups.length < k) {
       body = '<div class="card-b center muted">候选场次不足 ' + k + ' 场，无法生成 ' + k + ' 串 1（' + k + ' 场）组合。' +
@@ -404,15 +426,17 @@
         '可放宽赔率区间或调整关数。</div>';
     } else {
       body = '<div class="card-b flush"><div class="scrollx"><table class="tbl tbl-dense">' +
-        '<thead><tr><th>#</th><th>串关明细（' + k + ' 场 · ' + legsPer + ' 腿）</th><th class="num">组合赔率</th>' +
+        '<thead><tr><th>#</th><th>串关明细（每注 ' + k + ' 腿 · 每腿 1 场）</th><th class="num">组合赔率</th>' +
         '<th class="num">联合概率</th><th class="num">公平赔率</th><th class="num">EV</th><th>依据</th></tr></thead><tbody>' +
         shown.map(function (c, i) {
-          var allRec = c.legs.every(function (x) { return x.leg.src === '今日预测' || x.leg.src === '演示推荐'; });
+          var allRec = c.legs.every(function (x) {
+            return x.legs.every(function (l) { return l.src === '今日预测' || l.src === '演示推荐'; });
+          });
           var ev = evOf(c);
           return '<tr>' +
             '<td><b>' + (i + 1) + '</b></td>' +
-            '<td style="max-width:430px"><div>' + legTxt(c.legs[0].g, c.legs[0].leg) + '</div>' +
-              c.legs.slice(1).map(function (x) { return '<div style="margin-top:4px">' + legTxt(x.g, x.leg) + '</div>'; }).join('') +
+            '<td style="max-width:430px"><div>' + legTxt(c.legs[0]) + '</div>' +
+              c.legs.slice(1).map(function (x) { return '<div style="margin-top:4px">' + legTxt(x) + '</div>'; }).join('') +
             '</td>' +
             '<td class="num"><b style="color:var(--accent)">' + U.odds(c.sp) + '</b></td>' +
             '<td class="num"><b>' + U.pct(c.p, 2) + '</b></td>' +
@@ -424,17 +448,18 @@
         '</tbody></table></div>' +
         '<div class="card-b" style="border-top:1px solid var(--line)">' +
           '<div class="mini-grid">' +
-            '<div><div class="mg-l">候选腿 / 覆盖场次</div><div class="mg-v">' + legTotal + ' 腿 / ' + groups.length + ' 场</div></div>' +
+            '<div><div class="mg-l">候选结果 / 覆盖场次</div><div class="mg-v">' + legTotal + ' 条 / ' + groups.length + ' 场</div></div>' +
             '<div><div class="mg-l">区间内组合数</div><div class="mg-v">' + combos.length.toLocaleString('en-US') + '</div></div>' +
             '<div><div class="mg-l">最高组合赔率</div><div class="mg-v">' + U.odds(combos[0].sp) + '</div></div>' +
             '<div><div class="mg-l">展示</div><div class="mg-v">前 ' + shown.length + ' 组（EV 降序）</div></div>' +
           '</div>' +
-          '<p class="tiny muted mt8 mb0">组合赔率 = 各腿 SP 相乘；联合概率 = 各腿模型概率相乘（假设独立，同联赛/同时段开赛存在正相关，实际命中率通常低于估算）。' +
+          '<p class="tiny muted mt8 mb0">同一场比赛在同一玩法下的多个结果<b>合并为一条腿</b>（复式，如「001 总进球 · 2球、3球」），腿内各结果 SP 相乘 = 该腿赔率；' +
+          '组合赔率 = 各腿赔率相乘；联合概率 = 各腿模型概率相乘（假设独立，同联赛/同时段开赛存在正相关，实际命中率通常低于估算）。' +
           'EV = 联合概率 × 组合赔率 − 1，为负代表该组合在当前水位下长期期望亏损。</p>' +
         '</div></div>';
     }
     return '<div class="card mt16"><div class="card-h"><h2>模拟结果 · ' + U.esc(cfg.l) + '</h2>' +
-      '<span class="hint">' + k + ' 串 1（' + k + ' 场' + (legsPer ? ' · ' + legsPer + ' 腿' : '') + '）· 组合赔率 ' + rangeLabel(lo, hi) + ' · EV 降序' +
+      '<span class="hint">' + k + ' 串 1 · ' + k + ' 腿（每腿 1 场 · 同场结果合并为一条腿）· 组合赔率 ' + rangeLabel(lo, hi) + ' · EV 降序' +
         (ctext ? ' · 每注 ' + U.esc(ctext) : '') + '</span>' +
       (combos.length ? '<button class="btn-ghost" data-simexport style="margin-left:12px">导出结果图片（PNG 长图）</button>' : '') +
       '</div>' + body + '</div>';
@@ -524,9 +549,18 @@
       return {
         rank: 0,
         odds: c.sp, p: c.p, fair: 1 / c.p, ev: evOf(c),
-        src: c.legs.every(function (x) { return x.leg.src === '今日预测' || x.leg.src === '演示推荐'; }) ? '今日预测依据' : '含模型首选',
+        src: c.legs.every(function (x) {
+          return x.legs.every(function (l) { return l.src === '今日预测' || l.src === '演示推荐'; });
+        }) ? '今日预测依据' : '含模型首选',
         legs: c.legs.map(function (x) {
-          return { no: x.g.no, name: x.g.name, play: x.leg.play, sel: x.leg.sel, sp: x.leg.sp };
+          return {
+            no: x.g.no, name: x.g.name, play: x.play,
+            sel: x.legs.map(function (l) { return l.sel; }).join('、'),
+            sp: x.sp,
+            spTxt: x.legs.length > 1
+              ? x.legs.map(function (l) { return fmtOdds(l.sp); }).join('×') + '=' + fmtOdds(x.sp)
+              : fmtOdds(x.sp)
+          };
         })
       };
     });
@@ -544,13 +578,13 @@
     var legsMaxW = CARD_W - IN * 2 - RANK_W - STATS_W - 20;
     items.forEach(function (it) {
       it.legs.forEach(function (lg) {
-        lg.line = fit(f(15, 400), lg.name + '   ' + lg.play + ' · ' + lg.sel + ' @' + fmtOdds(lg.sp), legsMaxW - noW);
+        lg.line = fit(f(15, 400), lg.name + '   ' + lg.play + ' · ' + lg.sel + ' @' + lg.spTxt, legsMaxW - noW);
       });
       it.h = IN + Math.max(it.legs.length * LEG_H + 6, 156) + IN - 8;
     });
 
     var kpis = [
-      { l: '候选腿 / 覆盖场次', v: S.legTotal + ' / ' + S.groups.length + ' 场' },
+      { l: '候选结果 / 覆盖场次', v: S.legTotal + ' 条 / ' + S.groups.length + ' 场' },
       { l: '区间内组合数', v: S.combos.length.toLocaleString('en-US') },
       { l: '最高组合赔率', v: fmtOdds(S.combos[0].sp) },
       { l: '展示方案', v: '前 ' + items.length + ' 组' }
@@ -580,7 +614,7 @@
     ink('rgba(255,255,255,.55)'); sf(15, 500);
     ctx.fillText('竞析 JINGXI · 串关模拟', PAD, 44);
     ink('#ffffff'); sf(38, 700);
-    ctx.fillText(fit(ctx, S.cfg.l + ' · ' + S.k + ' 串 1（' + S.k + ' 场）', W - PAD * 2 - 220), PAD, 96);
+    ctx.fillText(fit(ctx, S.cfg.l + ' · ' + S.k + ' 串 1（' + S.k + ' 腿 · 每腿 1 场）', W - PAD * 2 - 220), PAD, 96);
     sf(26, 700); ink(EX.accent);
     var tagTxt = '组合赔率 ' + rangeLabel(S.lo, S.hi);
     ctx.fillText(tagTxt, W - PAD - ctx.measureText(tagTxt).width, 60);
@@ -591,7 +625,7 @@
     ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PAD, 158); ctx.lineTo(W - PAD, 158); ctx.stroke();
     ink('rgba(255,255,255,.6)'); sf(12.5, 400);
-    ctx.fillText('联合概率 = 各腿概率相乘（独立性近似；半全场为官方赔率隐含概率口径）；EV = 联合概率 × 组合赔率 − 1。模拟为结构参考，不构成任何盈利承诺。', PAD, 180);
+    ctx.fillText('同一场同玩法的多个结果合并为一条腿（复式，腿内 SP 相乘）；联合概率 = 各腿概率相乘（独立性近似；半全场为官方赔率隐含概率口径）；EV = 联合概率 × 组合赔率 − 1。模拟为结构参考，不构成任何盈利承诺。', PAD, 180);
 
     /* ---------- KPI 行 ---------- */
     var y = HEAD_H + KPI_TOP;

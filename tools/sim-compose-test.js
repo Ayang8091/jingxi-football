@@ -1,17 +1,19 @@
 /* ==========================================================================
-   串关模拟 · 每注构成「按今日预测结果数 + 场数」专项校验
+   串关模拟 · 构成专项校验（关数 = 场数 = 腿数，同场多结果合并为一条腿）
    --------------------------------------------------------------------------
-   规则（用户定稿的构成表）：
-     · 关数 = 场数：2 串 1 = 2 场、3 串 1 = 3 场、4 串 1 = 4 场；
-     · 每一场的腿数 = 该场在「今日预测」里的结果数：
+   规则（用户定稿）：
+     · 关数 = 场数 = 腿数：2 串 1 = 2 场 = 2 腿；
+     · 每场的结果数 = 该场在「今日预测」里的结果数：
        胜平负 / 让球胜平负 1 条，总进球 2 条；
+     · 同一场比赛在同一玩法下的多个结果「合并为一条腿」（复式），
+       如「周一001 中国女 vs 菲律宾女 总进球 · 2球、3球」，腿赔率 = 腿内各结果 SP 相乘；
      · 单玩法组合：每场取该玩法全部结果；
      · 双玩法组合：主玩法只占 1 场（1 条），其余（关数-1）场归第二玩法（每场全部结果）。
    于是 2 串 1 的构成是：
-     总进球组合           总进球 2 条 + 总进球 2 条      （4 腿）
-     胜平负+让球组合       胜平负 1 条 + 让球胜平负 1 条    （2 腿）
-     胜平负+总进球组合     胜平负 1 条 + 总进球 2 条       （3 腿）
-     让球+总进球组合       让球胜平负 1 条 + 总进球 2 条   （3 腿）
+     总进球组合           总进球 2 条 + 总进球 2 条      （2 腿，每腿 2 个结果）
+     胜平负+让球组合       胜平负 1 条 + 让球胜平负 1 条    （2 腿，每腿 1 个结果）
+     胜平负+总进球组合     胜平负 1 条 + 总进球 2 条       （2 腿）
+     让球+总进球组合       让球胜平负 1 条 + 总进球 2 条   （2 腿）
    运行：
      NODE_PATH=/Users/apple/.workbuddy/binaries/node/workspace/node_modules \
      /Users/apple/.workbuddy/binaries/node/versions/22.22.2-3/bin/node tools/sim-compose-test.js
@@ -89,55 +91,68 @@ function overallOpt() {                       // 切到「全部」赔率区间�
   if (btns.length) btns[btns.length - 1].dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
 }
 
-/* 玩法名「让球胜平负」包含「胜平负」：必须用正则按优先级整体匹配 */
-var PLAY_RE = /(让球胜平负|胜平负|总进球|半全场|比分)\s*·/g;
-function rowComps() {
+/* 一条腿的 DOM 文本形如：
+   周一001 中国女 vs 菲律宾女 总进球 · 2球、3球@3.95×4.45=2.58
+   解析出：场次号、玩法、各结果、赔率文本（单结果=SP；多结果=SP 连乘=腿赔率） */
+var LEG_RE = /^(\S+)\s+([\s\S]*?)(让球胜平负|胜平负|总进球|半全场|比分)\s*·\s*([^@]+)@(.+)$/;
+function parseLeg(div) {
+  var t = div.textContent.replace(/\s+/g, ' ').trim();
+  var m = LEG_RE.exec(t);
+  if (!m) return null;
+  return {
+    no: m[1], play: m[3],
+    sels: m[4].trim().split('、'),
+    oddsTxt: m[5].trim(),
+    n: m[4].trim().split('、').length
+  };
+}
+function rowLegs() {
   var rows = [].slice.call(host().querySelectorAll('table.tbl tbody tr'));
   return rows.map(function (tr) {
-    var cells = [].slice.call(tr.querySelectorAll('td:nth-child(2) div'));
-    var cnt = {};
-    cells.forEach(function (d) {
-      var re = new RegExp(PLAY_RE.source, 'g'), m;
-      while ((m = re.exec(d.textContent))) cnt[m[1]] = (cnt[m[1]] || 0) + 1;
-    });
-    return { n: cells.length, cnt: cnt };
+    var divs = [].slice.call(tr.querySelectorAll('td:nth-child(2) div'));
+    return { raw: divs.map(function (d) { return d.textContent.replace(/\s+/g, ' ').trim(); }),
+      legs: divs.map(parseLeg) };
   });
 }
-function compStr(cnt) {
-  return Object.keys(cnt).sort().map(function (p) { return p + '×' + cnt[p]; }).join(' + ');
+function legsByPlay(legs) {
+  var c = {};
+  legs.forEach(function (l) { if (l) c[l.play] = (c[l.play] || 0) + 1; });
+  return c;
 }
-function sameComp(cnt, want) { return compStr(cnt) === compStr(want); }
+function sameObj(a, b) {
+  var ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
+  if (ka.join() !== kb.join()) return false;
+  for (var i = 0; i < ka.length; i++) if (a[ka[i]] !== b[ka[i]]) return false;
+  return true;
+}
+function str(c) { return Object.keys(c).sort().map(function (p) { return p + '×' + c[p]; }).join(' + '); }
+function num(t) { return parseFloat(String(t).replace(/[^\d.]/g, '')); }
 
-/* 期望：每注构成 = f(关数) */
+/* 期望：每注构成 = f(关数)。legs = 各玩法的腿数，res = 该玩法每腿的结果数 */
 var MODES = [
   {
     k: 'had', label: '胜平负组合',
-    want: function (n) { return { '胜平负': n }; },
-    legs: function (n) { return n; },
+    legs: function (n) { return { '胜平负': n }; }, res: { '胜平负': 1 },
     text2: '胜平负 1 条 + 胜平负 1 条'
   },
   {
     k: 'ttg', label: '总进球组合',
-    want: function (n) { return { '总进球': 2 * n }; },
-    legs: function (n) { return 2 * n; },
+    legs: function (n) { return { '总进球': n }; }, res: { '总进球': 2 },
     text2: '总进球 2 条 + 总进球 2 条'
   },
   {
     k: 'had_hhad', label: '胜平负+让球组合',
-    want: function (n) { return { '胜平负': 1, '让球胜平负': n - 1 }; },
-    legs: function (n) { return n; },
+    legs: function (n) { return { '胜平负': 1, '让球胜平负': n - 1 }; }, res: { '胜平负': 1, '让球胜平负': 1 },
     text2: '胜平负 1 条 + 让球胜平负 1 条'
   },
   {
     k: 'had_ttg', label: '胜平负+总进球组合',
-    want: function (n) { return { '胜平负': 1, '总进球': 2 * (n - 1) }; },
-    legs: function (n) { return 2 * n - 1; },
+    legs: function (n) { return { '胜平负': 1, '总进球': n - 1 }; }, res: { '胜平负': 1, '总进球': 2 },
     text2: '胜平负 1 条 + 总进球 2 条'
   },
   {
     k: 'hhad_ttg', label: '让球+总进球组合',
-    want: function (n) { return { '让球胜平负': 1, '总进球': 2 * (n - 1) }; },
-    legs: function (n) { return 2 * n - 1; },
+    legs: function (n) { return { '让球胜平负': 1, '总进球': n - 1 }; }, res: { '让球胜平负': 1, '总进球': 2 },
     text2: '让球胜平负 1 条 + 总进球 2 条'
   }
 ];
@@ -152,69 +167,108 @@ setTimeout(function () {
   });
   ck('关数按钮保留 2/3/4 三个（实际 ' + kBtnCount() + '）', kBtnCount() === 3);
 
-  console.log('== 2. 六个模式的 2 串 1 构成（= 用户定稿表） ==');
+  console.log('== 2. 五个模式的 2 串 1 构成（= 用户定稿表） ==');
   MODES.forEach(function (m) {
     click('[data-scombo="' + m.k + '"]');
     overallOpt();
     click('[data-sk="2"]');
-    var rows = rowComps();
+    var rows = rowLegs();
     ck(m.label + '：2 串 1 有结果（' + rows.length + ' 组）', rows.length > 0);
-    var bad = rows.filter(function (r) { return !sameComp(r.cnt, m.want(2)); });
-    ck(m.label + '：每注构成 = ' + compStr(m.want(2)) + '（不合格 ' + bad.length + ' 组）',
-      rows.length > 0 && bad.length === 0, bad.length ? '例：' + compStr(bad[0].cnt) : '');
-    ck(m.label + '：每注腿数 = ' + m.legs(2) + '（实际 ' + (rows[0] ? rows[0].n : '-') + '）',
-      !!rows[0] && rows[0].n === m.legs(2));
+    var parsed = rows.every(function (r) { return r.legs.every(function (l) { return !!l; }); });
+    ck(m.label + '：每行腿文本均可解析（场次/玩法/结果/赔率）', parsed,
+      parsed ? '' : rows[0].raw.join(' || '));
+    var badComp = rows.filter(function (r) { return !sameObj(legsByPlay(r.legs), m.legs(2)); });
+    ck(m.label + '：每注腿构成 = ' + str(m.legs(2)) + '（不合格 ' + badComp.length + ' 组）',
+      rows.length > 0 && badComp.length === 0, badComp.length ? '例：' + str(legsByPlay(badComp[0].legs)) : '');
+    ck(m.label + '：每注腿数 = 2（= 关数 = 场数，实际 ' + (rows[0] ? rows[0].legs.length : '-') + '）',
+      !!rows[0] && rows[0].legs.length === 2);
+    var badRes = rows.filter(function (r) {
+      return !r.legs.every(function (l) { return l && l.n === m.res[l.play]; });
+    });
+    ck(m.label + '：每腿结果数 = ' + JSON.stringify(m.res) + '（不合格 ' + badRes.length + ' 组）',
+      rows.length > 0 && badRes.length === 0,
+      badRes.length ? '例：' + JSON.stringify(badRes[0].legs.map(function (l) { return l.play + ':' + l.n; })) : '');
+    var dup = rows.filter(function (r) {
+      var nos = r.legs.map(function (l) { return l && l.no; });
+      return new Set(nos).size !== nos.length;
+    });
+    ck(m.label + '：同一场比赛不重复串联（重复行 ' + dup.length + '）', dup.length === 0);
     ck(m.label + '：结果卡标注「' + m.text2 + '」', hint().indexOf(m.text2) > -1, hint());
-    ck(m.label + '：结果卡标注 2 串 1（2 场）', hint().indexOf('2 串 1（2 场') > -1, hint());
+    ck(m.label + '：结果卡标注 2 串 1 · 2 腿', hint().indexOf('2 串 1 · 2 腿') > -1, hint());
   });
 
-  console.log('== 3. 关数 3 / 4（场数增加，构成按同一条规则扩展） ==');
+  console.log('== 3. 关数 3 / 4（场数 = 腿数增加，构成按同一条规则扩展） ==');
   MODES.forEach(function (m) {
     click('[data-scombo="' + m.k + '"]');
     overallOpt();
     [3, 4].forEach(function (n) {
       click('[data-sk="' + n + '"]');
-      var rows = rowComps();
+      var rows = rowLegs();
       ck(m.label + '：' + n + ' 串 1 有结果（' + rows.length + ' 组）', rows.length > 0);
-      var bad = rows.filter(function (r) { return !sameComp(r.cnt, m.want(n)); });
-      ck(m.label + '：' + n + ' 串 1 构成 = ' + compStr(m.want(n)) + '（不合格 ' + bad.length + ' 组）',
-        rows.length > 0 && bad.length === 0, bad.length ? '例：' + compStr(bad[0].cnt) : '');
-      ck(m.label + '：' + n + ' 串 1 腿数 = ' + m.legs(n) + '（实际 ' + (rows[0] ? rows[0].n : '-') + '）',
-        !!rows[0] && rows[0].n === m.legs(n));
-      ck(m.label + '：' + n + ' 串 1 标注（' + n + ' 场 · ' + m.legs(n) + ' 腿）',
-        hint().indexOf(n + ' 串 1（' + n + ' 场 · ' + m.legs(n) + ' 腿）') > -1, hint());
+      var bad = rows.filter(function (r) { return !sameObj(legsByPlay(r.legs), m.legs(n)); });
+      ck(m.label + '：' + n + ' 串 1 腿构成 = ' + str(m.legs(n)) + '（不合格 ' + bad.length + ' 组）',
+        rows.length > 0 && bad.length === 0, bad.length ? '例：' + str(legsByPlay(bad[0].legs)) : '');
+      ck(m.label + '：' + n + ' 串 1 每注腿数 = ' + n + '（实际 ' + (rows[0] ? rows[0].legs.length : '-') + '）',
+        !!rows[0] && rows[0].legs.length === n);
+      ck(m.label + '：' + n + ' 串 1 标注「' + n + ' 串 1 · ' + n + ' 腿」',
+        hint().indexOf(n + ' 串 1 · ' + n + ' 腿') > -1, hint());
     });
   });
 
-  console.log('== 4. 混合模式不受影响（每场 1 条腿，关数 = 场数 = 腿数） ==');
+  console.log('== 4. 同场多结果合并为一条腿（复式） ==');
+  click('[data-scombo="ttg"]');
+  overallOpt();
+  click('[data-sk="2"]');
+  var trows = rowLegs();
+  ck('总进球组合：每腿含 2 个结果，用「、」连接',
+    trows.length > 0 && trows[0].legs.every(function (l) { return l.n === 2; }));
+  ck('总进球组合：腿文本形如「… 总进球 · 2球、3球@…」（' + (trows[0] ? trows[0].legs[0].sels.join('、') : '-') + '）',
+    !!trows[0] && trows[0].legs[0].sels.length === 2);
+  ck('总进球组合：多结果腿的赔率为连乘式（' + (trows[0] ? trows[0].legs[0].oddsTxt : '-') + '）',
+    !!trows[0] && /×/.test(trows[0].legs[0].oddsTxt) && /=/.test(trows[0].legs[0].oddsTxt));
+  /* 腿赔率 = 腿内各结果 SP 相乘 */
+  var odOk = trows.length > 0 && trows[0].legs.every(function (l) {
+    var parts = l.oddsTxt.split('=');
+    var sps = parts[0].split('×').map(num);
+    var prod = sps.reduce(function (a, b) { return a * b; }, 1);
+    return Math.abs(prod - num(parts[1])) < 0.02;
+  });
+  ck('总进球组合：腿赔率 = 腿内各结果 SP 相乘', odOk);
+  click('[data-scombo="had"]');
+  overallOpt();
+  ck('胜平负组合：单结果腿赔率为单个 SP（无连乘式）',
+    rowLegs().every(function (r) { return r.legs.every(function (l) { return !/×/.test(l.oddsTxt); }); }));
+
+  console.log('== 5. 混合模式不受影响（每场 1 条腿，关数 = 场数 = 腿数） ==');
   click('[data-scombo="mix3"]');
   overallOpt();
   [2, 3, 4].forEach(function (n) {
     click('[data-sk="' + n + '"]');
-    var rows = rowComps();
-    ck('玩法混合组合：' + n + ' 串 1 = ' + n + ' 场 / ' + n + ' 腿（实际 ' +
-      (rows[0] ? rows[0].n + ' 腿' : '-') + '）', !!rows[0] && rows[0].n === n);
+    var rows = rowLegs();
+    ck('玩法混合组合：' + n + ' 串 1 = ' + n + ' 腿（实际 ' + (rows[0] ? rows[0].legs.length : '-') + '）',
+      !!rows[0] && rows[0].legs.length === n);
+    ck('玩法混合组合：' + n + ' 串 1 每腿 1 个结果',
+      !!rows[0] && rows[0].legs.every(function (l) { return l && l.n === 1; }));
   });
   click('[data-scombo="oddsMix"]');
   overallOpt();
-  var orows = rowComps();
-  ck('按赔率混合组合：仍可出结果（' + orows.length + ' 组）', orows.length > 0);
+  ck('按赔率混合组合：仍可出结果（' + rowLegs().length + ' 组）', rowLegs().length > 0);
 
-  console.log('== 5. 构成文案与参数区说明 ==');
+  console.log('== 6. 构成文案与参数区说明 ==');
   click('[data-scombo="ttg"]');
   ck('总进球组合参数区写出 2 串 1 构成', cardHtml().indexOf('总进球 2 条 + 总进球 2 条') > -1);
   click('[data-scombo="hhad_ttg"]');
   ck('让球+总进球参数区写出 2 串 1 构成', cardHtml().indexOf('让球胜平负 1 条 + 总进球 2 条') > -1);
   ck('参数区标注关数 = 场数', cardHtml().indexOf('串关关数（场数）') > -1);
+  ck('参数区说明「同场结果合并为一条腿」', cardHtml().indexOf('合并为一条腿') > -1);
 
-  console.log('== 6. 渲染卫生与导出链路 ==');
+  console.log('== 7. 渲染卫生与导出链路 ==');
   var htmlAll = cardHtml();
   ck('无 NaN', htmlAll.indexOf('NaN') === -1);
   ck('无 undefined', htmlAll.indexOf('undefined') === -1);
   var url = null, err = null;
   try { url = w.JX.simExportDataURL(); } catch (e) { err = e; }
   ck('PNG 长图可生成（无异常）', !err && !!url, err ? err.message : '');
-  ck('PNG 头部含每注构成', htmlAll.indexOf('每注') > -1);
 
   finish();
 }, 320);
