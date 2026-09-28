@@ -11,7 +11,8 @@
            胜平负 1 条 + 让球胜平负 1 条；胜平负 1 条 + 总进球 2 条；
            让球胜平负 1 条 + 总进球 2 条）
      7) 玩法混合组合      （五种玩法混合，与今日预测完全同口径）
-     8) 按赔率混合组合    （不限玩法，以组合赔率区间 3~50 倍为核心筛选，区间内按 EV 排序）
+     8) 手动混合组合      （手动从「今日预测」勾选场次加入串关，并为每场自由搭配玩法——
+                           胜平负 / 让球胜平负 / 总进球 / 半全场 / 比分，按所选场次与玩法生成组合）
    规则：
      · 关数 = 场数 = 腿数（2 串 1 = 2 场 = 2 腿），每一场的腿数（结果数）按「今日预测」取：
        单玩法组合每场取该玩法全部结果（2 串 1 = 总进球 2 条 + 总进球 2 条）；
@@ -36,19 +37,22 @@
 
   var state = {
     day: 'today',
-    combo: 'had',      // had | hhad | ttg | had_hhad | had_ttg | hhad_ttg | mix3 | oddsMix
+    combo: 'had',      // had | hhad | ttg | had_hhad | had_ttg | hhad_ttg | mix3 | manual
     k: 3,              // 关数 2/3/4
     oddsMin: 3,
     oddsMax: 50,
-    inclModel: true    // 无推荐时用模型首选腿补充
+    inclModel: true,   // 无推荐时用模型首选腿补充
+    manual: {}         // 手动混合组合的选择：{ [day]: { [mid]: [玩法…] } }
   };
   try {
     var s = localStorage.getItem(STORE_KEY);
     if (s) {
       var o = JSON.parse(s);
-      ['day', 'combo', 'k', 'oddsMin', 'oddsMax', 'inclModel'].forEach(function (key) {
+      ['day', 'combo', 'k', 'oddsMin', 'oddsMax', 'inclModel', 'manual'].forEach(function (key) {
         if (o && o[key] !== undefined) state[key] = o[key];
       });
+      if (state.combo === 'oddsMix') state.combo = 'manual';   // 旧版「按赔率混合」已改为手动模式
+      if (!state.manual || typeof state.manual !== 'object') state.manual = {};
     }
   } catch (e) { }
   function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { } }
@@ -74,8 +78,8 @@
       desc: '每场从五种玩法里挑 1 条腿，与今日预测推荐完全同口径，按 EV 从高到低排序'
     },
     {
-      k: 'oddsMix', l: '按赔率混合组合', plays: ['胜平负', '让球胜平负', '总进球', '半全场', '比分'], mix: true,
-      desc: '每场从五种玩法里挑 1 条腿，以组合赔率落在所选区间为核心，按 EV 排序'
+      k: 'manual', l: '手动混合组合', plays: ['胜平负', '让球胜平负', '总进球', '半全场', '比分'], manual: true,
+      desc: '手动从「今日预测」勾选场次加入串关，并为每场自由搭配玩法（胜平负 / 让球胜平负 / 总进球 / 半全场 / 比分），按所选场次与玩法生成组合'
     }
   ];
   function comboOf() { return COMBOS.filter(function (c) { return c.k === state.combo; })[0] || COMBOS[0]; }
@@ -90,7 +94,7 @@
      单玩法：每场各自的结果数 × 场数；
      双玩法：主玩法只占 1 场（1 条），其余（关数-1）场归第二玩法 → 构成随关数增长。 */
   function compText(cfg, k) {
-    if (!cfg || cfg.mix) return null;
+    if (!cfg || cfg.mix || cfg.manual) return null;
     k = k || state.k;
     if (!cfg.req) {
       var n = REC_N[cfg.plays[0]] || 1;
@@ -142,53 +146,167 @@
   function buildMatchLegs() {
     /* 返回 [{ mid, no, name, legs:[{play,sel,sp,p,ev,src}] }]，仅限所选日期。
        腿池首选「今日预测」的推荐（m.recs，与首页/单场页完全同口径）；
-       演示快照等无 recs 的数据回退到旧 picks + 模型首选腿。 */
+       演示快照等无 recs 的数据回退到旧 picks + 模型首选腿。
+       手动混合组合：只取「手动选场」里勾选的场次，且每场只取勾选的玩法。 */
     var cfg = comboOf();
+    var selMap = cfg.manual ? (state.manual[state.day] || {}) : null;
     var ms = (D.matches || []).filter(function (m) {
       return m.day === state.day && (m.sp || (m.recs && m.recs.length) || (m.picks && m.picks.length));
     });
     var out = [];
     ms.forEach(function (m) {
-      var legs = [], seen = {};
-      /* 首选：今日预测推荐（recs 已按各玩法概率降序、固定条数输出） */
-      (m.recs || []).forEach(function (rc) {
-        if (cfg.plays.indexOf(rc.play) === -1) return;
-        var key = rc.play + '|' + rc.sel;
-        if (seen[key]) return;
-        if (!(rc.sp > 1) || !(rc.p > 0)) return;   // 比分官方 SP 缺失时无法参与串关，跳过
-        seen[key] = 1;
-        legs.push({ play: rc.play, sel: rc.sel, sp: +rc.sp, p: rc.p, ev: rc.p * rc.sp - 1, src: '今日预测', basis: rc.basis || 'model' });
-      });
-      /* 兜底：无 recs（演示快照）—— 旧 picks 逻辑 */
-      if (!legs.length) {
-        (m.picks || []).forEach(function (pk) {
-          if (cfg.plays.indexOf(pk.play) === -1) return;
-          if (seen[pk.play + '|' + pk.sel]) return;
-          var p = pickProb(m, pk);
-          if (!(p > 0) || !(pk.sp > 1)) return;
-          seen[pk.play + '|' + pk.sel] = 1;
-          legs.push({ play: pk.play, sel: pk.sel, sp: +pk.sp, p: p, ev: p * pk.sp - 1, src: '演示推荐' });
-        });
-      }
-      /* 可选：某玩法仍无腿时，用模型首选方向补「结构参考」腿 */
-      if (state.inclModel) {
-        cfg.plays.forEach(function (pl) {
-          var has = legs.some(function (lg) { return lg.play === pl; });
-          if (has) return;
-          var lg = modelFirstLeg(m, pl);
-          if (lg) { legs.push(lg); }
-        });
-      }
+      var plays = cfg.manual ? (selMap[m.id] || []) : cfg.plays;
+      if (cfg.manual && !plays.length) return;   // 未勾选任何玩法的场次不参与
+      var legs = collectLegs(m, plays);
       if (legs.length) {
-        legs.sort(function (a, b) { return b.p - a.p; });
         out.push({
           mid: m.id, no: m.no,
           name: (m.home.short || m.home.name) + ' vs ' + (m.away.short || m.away.name),
-          legs: legs
+          legs: legs,
+          manualPlays: cfg.manual ? plays.slice() : null
         });
       }
     });
     return out;
+  }
+
+  function collectLegs(m, plays) {
+    /* 单场的腿池：plays 里每个玩法取「今日预测」的全部结果（同口径，按概率降序） */
+    var legs = [], seen = {};
+    /* 首选：今日预测推荐（recs 已按各玩法概率降序、固定条数输出） */
+    (m.recs || []).forEach(function (rc) {
+      if (plays.indexOf(rc.play) === -1) return;
+      var key = rc.play + '|' + rc.sel;
+      if (seen[key]) return;
+      if (!(rc.sp > 1) || !(rc.p > 0)) return;     // 比分官方 SP 缺失时无法参与串关，跳过
+      seen[key] = 1;
+      legs.push({ play: rc.play, sel: rc.sel, sp: +rc.sp, p: rc.p, ev: rc.p * rc.sp - 1, src: '今日预测', basis: rc.basis || 'model' });
+    });
+    /* 兜底：无 recs（演示快照）—— 旧 picks 逻辑 */
+    if (!legs.length) {
+      (m.picks || []).forEach(function (pk) {
+        if (plays.indexOf(pk.play) === -1) return;
+        if (seen[pk.play + '|' + pk.sel]) return;
+        var p = pickProb(m, pk);
+        if (!(p > 0) || !(pk.sp > 1)) return;
+        seen[pk.play + '|' + pk.sel] = 1;
+        legs.push({ play: pk.play, sel: pk.sel, sp: +pk.sp, p: p, ev: p * pk.sp - 1, src: '演示推荐' });
+      });
+    }
+    /* 可选：某玩法仍无腿时，用模型首选方向补「结构参考」腿 */
+    if (state.inclModel) {
+      plays.forEach(function (pl) {
+        var has = legs.some(function (lg) { return lg.play === pl; });
+        if (has) return;
+        var lg = modelFirstLeg(m, pl);
+        if (lg) { legs.push(lg); }
+      });
+    }
+    legs.sort(function (a, b) { return b.p - a.p; });
+    return legs;
+  }
+
+  /* ------------------------------------------------------ 手动混合组合 */
+  var PLAY_L = { '胜平负': '胜平负', '让球胜平负': '让球', '总进球': '总进球', '半全场': '半全场', '比分': '比分' };
+
+  function manualSelMap() { return state.manual[state.day] || {}; }
+  function manualSelCount() {
+    var m = manualSelMap(), n = 0;
+    Object.keys(m).forEach(function (k) { if (m[k] && m[k].length) n++; });
+    return n;
+  }
+
+  function matchMeta(m) {
+    /* 场次的候选信息：名称 + 各玩法是否有可用腿（与 collectLegs 同一口径） */
+    var avail = {};
+    Object.keys(PLAY_L).forEach(function (pl) {
+      var has = (m.recs || []).some(function (rc) { return rc.play === pl && rc.sp > 1 && rc.p > 0; });
+      if (!has) has = (m.picks || []).some(function (pk) { return pk.play === pl && pk.sp > 1; });
+      if (!has && state.inclModel) has = !!modelFirstLeg(m, pl);
+      avail[pl] = has;
+    });
+    return {
+      mid: m.id, no: m.no,
+      name: (m.home.short || m.home.name) + ' vs ' + (m.away.short || m.away.name),
+      avail: avail
+    };
+  }
+
+  function manualPool() {
+    return (D.matches || []).filter(function (m) {
+      return m.day === state.day && (m.recs && m.recs.length || m.picks && m.picks.length);
+    }).map(matchMeta);
+  }
+
+  function manualCard() {
+    var pool = manualPool();
+    var selMap = manualSelMap();
+    var n = manualSelCount();
+    var rows = pool.map(function (g) {
+      var sel = selMap[g.mid] || [];
+      var chips = Object.keys(PLAY_L).map(function (pl) {
+        var on = sel.indexOf(pl) > -1, av = g.avail[pl];
+        return '<button data-smplay="' + U.esc(g.mid) + '|' + U.esc(pl) + '" title="' + U.esc(pl) + (av ? '' : '（暂无推荐，不可选）') + '"' +
+          ' class="' + (on ? 'on' : '') + '"' + (av ? '' : ' disabled style="opacity:.35;cursor:not-allowed"') + '>' +
+          PLAY_L[pl] + '</button>';
+      }).join('');
+      return '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:9px 0;border-bottom:1px dashed var(--line)">' +
+        '<label class="small" style="display:flex;align-items:center;gap:7px;min-width:225px;cursor:pointer;flex-shrink:0">' +
+          '<input type="checkbox" data-smmid="' + U.esc(g.mid) + '"' + (sel.length ? ' checked' : '') + '>' +
+          '<span><b>' + U.esc(g.no) + '</b> ' + U.esc(g.name) + '</span></label>' +
+        '<div class="seg" style="flex-wrap:wrap">' + chips + '</div>' +
+        '</div>';
+    }).join('');
+    return '<div class="card mt16"><div class="card-h"><h3>手动选场 · 添加场次与玩法</h3>' +
+      '<span class="tiny muted">候选来自「今日预测」· 已添加 <b>' + n + '</b> 场 · 勾选场次后可为该场自由搭配玩法</span></div>' +
+      '<div class="card-b">' +
+      (rows || '<div class="muted small">当前日期暂无可串关的场次。</div>') +
+      '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">' +
+        '<button class="btn-ghost" data-smclear>清空全部选择</button>' +
+        '<span class="tiny muted">玩法腿与其它模式同口径：同场同玩法的多个结果合并为一条复式腿（腿赔率取最高 SP，腿概率相加）；同一场比赛不可重复串联。</span>' +
+      '</div></div></div>';
+  }
+
+  function manualChoicesFor(g) {
+    /* 手动模式每场的可选项：勾选的每个玩法打包成一条「复式腿」
+       （腿赔率 = 腿内最高 SP，腿概率 = 腿内各结果概率相加且 ≤1） */
+    var out = [];
+    (g.manualPlays || []).forEach(function (play) {
+      var ls = g.legs.filter(function (l) { return l.play === play; });
+      if (!ls.length) return;
+      var sp = 0, p = 0;
+      ls.forEach(function (l) { if (l.sp > sp) sp = l.sp; p += l.p; });
+      if (p > 1) p = 1;
+      out.push({ play: play, legs: ls, sp: sp, p: p });
+    });
+    return out;
+  }
+
+  function enumerateManual(groups, k, lo, hi) {
+    /* 从手动勾选的场次里取 k 场（每注），每场从勾选的玩法里挑 1 条腿；
+       同一场比赛只出现一次（竞彩规则），按 EV 排序由外层统一处理 */
+    var res = [], nodes = 0, NODE_LIMIT = 600000;
+    (function rec(idx, picked, sp, p, used) {
+      if (nodes++ > NODE_LIMIT) return;
+      if (used === k) {
+        if (sp < lo) return;
+        res.push({ legs: picked.slice(), sp: sp, p: p });
+        return;
+      }
+      if (idx >= groups.length) return;
+      if (groups.length - idx < k - used) return;
+      if (sp > hi) return;                        // SP 只增不减，超上限直接剪枝
+      var opts = manualChoicesFor(groups[idx]);
+      for (var j = 0; j < opts.length; j++) {
+        var o = opts[j], before = picked.length, sp2 = sp * o.sp, p2 = p * o.p;
+        if (sp2 > hi) continue;
+        picked.push({ g: groups[idx], play: o.play, legs: o.legs, sp: o.sp, p: o.p });
+        rec(idx + 1, picked, sp2, p2, used + 1);
+        picked.length = before;
+      }
+      rec(idx + 1, picked, sp, p, used);          // 跳过该场
+    })(0, [], 1, 1, 0);
+    return res;
   }
 
   /* ------------------------------------------------------------ 组合枚举 */
@@ -317,10 +435,13 @@
     if (hi < lo) hi = lo;
 
     var legTotal = groups.reduce(function (s, g) { return s + g.legs.length; }, 0);
-    /* 关数 = 场数（2 串 1 就是 2 场）：按场配腿枚举，每场取该玩法今日预测的全部结果 */
+    /* 关数 = 场数（2 串 1 就是 2 场）：按场配腿枚举，每场取该玩法今日预测的全部结果；
+       手动混合组合：从勾选的场次里取 k 场，每场从勾选的玩法里挑 1 条复式腿 */
     var k = state.k;
     var combos = groups.length >= k
-      ? (cfg.mix ? enumerate(groups, k, lo, hi, null, null) : enumerateByMatch(groups, k, lo, hi, cfg))
+      ? (cfg.manual ? enumerateManual(groups, k, lo, hi)
+        : cfg.mix ? enumerate(groups, k, lo, hi, null, null)
+        : enumerateByMatch(groups, k, lo, hi, cfg))
       : [];
     /* 统一按 EV 从大到小排列 */
     combos.sort(function (a, b) { return evOf(b) - evOf(a); });
@@ -328,12 +449,14 @@
     lastSim = {
       cfg: cfg, k: k, compText: compText(cfg, k),
       dayL: DAY_L[state.day] || state.day, groups: groups, legTotal: legTotal,
-      combos: combos, shown: shown, lo: lo, hi: hi
+      combos: combos, shown: shown, lo: lo, hi: hi,
+      manualPicks: cfg.manual ? JSON.parse(JSON.stringify(state.manual[state.day] || {})) : null
     };
 
     host.innerHTML =
       head(cfg) +
       controls(cfg) +
+      (cfg.manual ? manualCard() : '') +
       resultsCard(cfg, groups, legTotal, combos, shown, lo, hi, k) +
       mathCard();
     bind();
@@ -349,12 +472,12 @@
   function head(cfg) {
     return '<div class="pagehead"><div class="wrap">' +
       '<div class="crumb"><a href="index.html">今日预测</a> / 串关模拟</div>' +
-      '<h1>串关模拟 · 按玩法与赔率区间组合</h1>' +
+      '<h1>串关模拟 · 玩法组合与手动选场</h1>' +
       '<div class="sub">以<b>「今日预测」页展示的推荐结果</b>为组合依据' +
       '（胜平负 / 让球各 1 条、总进球 / 半全场各 2 条、比分 3 条，与首页完全同口径），' +
       '提供 8 种搭配模式：胜平负 / 让球胜平负 / 总进球 单一玩法，' +
       '胜平负+让球 / 胜平负+总进球 / 让球+总进球 双玩法搭配，' +
-      '以及玩法混合 / 按赔率混合。' +
+      '以及玩法混合 / <b>手动混合（手动勾选场次 + 每场自由搭配玩法）</b>。' +
       '<b>串关关数 2 串 1 / 3 串 1 / 4 串 1 = 2 / 3 / 4 场 = 2 / 3 / 4 腿</b>，每一场的腿数（结果数）按<b>今日预测的结果数</b>取：' +
       '胜平负、让球胜平负各 1 条，总进球 2 条。' +
       '同一场比赛在同一玩法下的多个结果<b>合并为一条腿</b>（复式覆盖，如「001 总进球 · 2球、3球」，腿赔率取腿内最高的 SP）。' +
@@ -396,9 +519,13 @@
           '<input type="checkbox" id="sim-incl"' + (state.inclModel ? ' checked' : '') + '> 无推荐时用模型首选腿补充</label>' +
       '</div>' +
       '<div class="tiny muted mt16">当前模式：<b>' + U.esc(cfg.l) + '</b> — ' + U.esc(cfg.desc) + '。' +
-      (compText(cfg, state.k)
-        ? '当前 ' + state.k + ' 串 1（' + state.k + ' 场 = ' + state.k + ' 腿），每注构成：<b>' + U.esc(compText(cfg, state.k)) + '</b>。'
-        : '每场从五种玩法里各挑 1 条腿，' + state.k + ' 串 1 = ' + state.k + ' 场 = ' + state.k + ' 腿。') +
+      (cfg.manual
+        ? '已在下方「手动选场」添加 <b>' + manualSelCount() + '</b> 场；每注取 ' + state.k +
+          ' 场（' + state.k + ' 串 1 = ' + state.k + ' 腿），每场从你勾选的玩法里各取 1 条复式腿，' +
+          '从所有可行组合里按 EV 从高到低排列。'
+        : compText(cfg, state.k)
+          ? '当前 ' + state.k + ' 串 1（' + state.k + ' 场 = ' + state.k + ' 腿），每注构成：<b>' + U.esc(compText(cfg, state.k)) + '</b>。'
+          : '每场从五种玩法里各挑 1 条腿，' + state.k + ' 串 1 = ' + state.k + ' 场 = ' + state.k + ' 腿。') +
       '同一场比赛在同一玩法下的多个结果<b>合并为一条腿</b>（复式覆盖，如「001 总进球 · 2球、3球」，腿赔率取腿内最高的 SP）。' +
       '腿池即「今日预测」的推荐结果；若某玩法暂无推荐，开启「模型首选补充」后按该玩法模型概率最高的方向生成结构参考腿。</div>' +
       '</div></div>';
@@ -423,14 +550,21 @@
   function resultsCard(cfg, groups, legTotal, combos, shown, lo, hi, k) {
     var ctext = compText(cfg, k);
     var body;
-    if (groups.length < k) {
+    if (cfg.manual && manualSelCount() === 0) {
+      body = '<div class="card-b center muted">尚未添加场次：请在上方「手动选场 · 添加场次与玩法」卡片里勾选想串的比赛' +
+        '（至少 ' + k + ' 场），并为每场勾选玩法，即可生成 ' + k + ' 串 1 组合。</div>';
+    } else if (cfg.manual && groups.length < k) {
+      body = '<div class="card-b center muted">已添加 <b>' + manualSelCount() + '</b> 场、其中 ' + groups.length +
+        ' 场有可用玩法，不足 ' + k + ' 场，无法生成 ' + k + ' 串 1（' + k + ' 场）组合。' +
+        '请在「手动选场」里继续添加场次，或把串关关数调低。</div>';
+    } else if (groups.length < k) {
       body = '<div class="card-b center muted">候选场次不足 ' + k + ' 场，无法生成 ' + k + ' 串 1（' + k + ' 场）组合。' +
         (ctext ? '本模式每注构成为 ' + U.esc(ctext) + '，需要至少 ' + k + ' 场同时具备对应玩法。' : '') +
         '可切换日期、模式，或开启「模型首选补充」。</div>';
     } else if (!combos.length) {
       body = '<div class="card-b center muted">在 ' + rangeLabel(lo, hi) + '区间内没有符合条件的组合。' +
         (ctext ? '本模式每注构成为 ' + U.esc(ctext) + '，' : '') +
-        '可放宽赔率区间或调整关数。</div>';
+        '可放宽赔率区间' + (cfg.manual ? '，或增删所选场次与玩法' : '或调整关数') + '。</div>';
     } else {
       body = '<div class="card-b flush"><div class="scrollx"><table class="tbl tbl-dense">' +
         '<thead><tr><th>#</th><th>串关明细（每注 ' + k + ' 腿 · 每腿 1 场）</th><th class="num">组合赔率</th>' +
@@ -737,31 +871,65 @@
   }
 
   /* ------------------------------------------------------------ 事件绑定 */
+  var bound = false;   // 事件委托只挂一次（renderSim 会反复重建 DOM，document 级委托不受影响）
   function bind() {
-    U.on(document, 'click', '[data-sday]', function (e, t) {
-      state.day = t.dataset.sday;
-      U.$$('[data-sday]').forEach(function (b) { b.classList.toggle('on', b === t); });
-      save(); renderSim();
-    });
-    U.on(document, 'click', '[data-scombo]', function (e, t) {
-      state.combo = t.dataset.scombo;
-      U.$$('[data-scombo]').forEach(function (b) { b.classList.toggle('on', b === t); });
-      syncK();                       // 双玩法搭配模式：关数回到「今日预测结果数之和」那一档
-      save(); renderSim();
-    });
-    U.on(document, 'click', '[data-sk]', function (e, t) {
-      state.k = +t.dataset.sk;
-      U.$$('[data-sk]').forEach(function (b) { b.classList.toggle('on', b === t); });
-      save(); renderSim();
-    });
-    U.on(document, 'click', '[data-srange]', function (e, t) {
-      var parts = t.dataset.srange.split('-');
-      state.oddsMin = +parts[0]; state.oddsMax = +parts[1];
-      save(); renderSim();
-    });
-    var incl = U.byId('sim-incl');
+    if (!bound) {
+      bound = true;
+      U.on(document, 'click', '[data-sday]', function (e, t) {
+        state.day = t.dataset.sday;
+        U.$$('[data-sday]').forEach(function (b) { b.classList.toggle('on', b === t); });
+        save(); renderSim();
+      });
+      U.on(document, 'click', '[data-scombo]', function (e, t) {
+        state.combo = t.dataset.scombo;
+        U.$$('[data-scombo]').forEach(function (b) { b.classList.toggle('on', b === t); });
+        syncK();                       // 双玩法搭配模式：关数回到「今日预测结果数之和」那一档
+        save(); renderSim();
+      });
+      U.on(document, 'click', '[data-sk]', function (e, t) {
+        state.k = +t.dataset.sk;
+        U.$$('[data-sk]').forEach(function (b) { b.classList.toggle('on', b === t); });
+        save(); renderSim();
+      });
+      U.on(document, 'click', '[data-srange]', function (e, t) {
+        var parts = t.dataset.srange.split('-');
+        state.oddsMin = +parts[0]; state.oddsMax = +parts[1];
+        save(); renderSim();
+      });
+      U.on(document, 'click', '[data-simexport]', function () { exportPNG(); });
+      /* ---- 手动混合组合：勾选场次 / 搭配玩法 / 清空 ---- */
+      U.on(document, 'click', '[data-smmid]', function (e, t) {
+        var mid = t.dataset.smmid;
+        if (!state.manual[state.day]) state.manual[state.day] = {};
+        if (t.checked) {
+          /* 勾选场次：默认把该场全部可用玩法一起加入，用户可再自行增删 */
+          if (!state.manual[state.day][mid] || !state.manual[state.day][mid].length) {
+            var g = manualPool().filter(function (x) { return x.mid === mid; })[0];
+            var plays = g ? Object.keys(g.avail).filter(function (pl) { return g.avail[pl]; }) : [];
+            state.manual[state.day][mid] = plays;
+          }
+        } else {
+          delete state.manual[state.day][mid];
+        }
+        save(); renderSim();
+      });
+      U.on(document, 'click', '[data-smplay]', function (e, t) {
+        var parts = t.dataset.smplay.split('|');
+        var mid = parts[0], play = parts.slice(1).join('|');
+        if (!state.manual[state.day]) state.manual[state.day] = {};
+        var sel = state.manual[state.day][mid] || (state.manual[state.day][mid] = []);
+        var i = sel.indexOf(play);
+        if (i > -1) sel.splice(i, 1); else sel.push(play);
+        if (!sel.length) delete state.manual[state.day][mid];   // 玩法清空＝移除该场
+        save(); renderSim();
+      });
+      U.on(document, 'click', '[data-smclear]', function () {
+        state.manual[state.day] = {};
+        save(); renderSim();
+      });
+    }
+    var incl = U.byId('sim-incl');   // 该元素随 DOM 重建，需每次重挂
     if (incl) incl.addEventListener('change', function () { state.inclModel = this.checked; save(); renderSim(); });
-    U.on(document, 'click', '[data-simexport]', function () { exportPNG(); });
   }
 
   JX.renderSim = renderSim;

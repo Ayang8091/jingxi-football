@@ -298,9 +298,86 @@ setTimeout(function () {
     ck('玩法混合组合：' + n + ' 串 1 每腿 1 个结果',
       !!rows[0] && rows[0].legs.every(function (l) { return l && l.n === 1; }));
   });
-  click('[data-scombo="oddsMix"]');
+  click('[data-scombo="manual"]');
   overallOpt();
-  ck('按赔率混合组合：仍可出结果（' + rowLegs().length + ' 组）', rowLegs().length > 0);
+  ck('手动混合组合：进模式后默认 2 串 1（实际 ' + activeK() + '）', activeK() === 2);
+  ck('手动混合组合：出现「手动选场 · 添加场次与玩法」卡片', cardHtml().indexOf('手动选场 · 添加场次与玩法') > -1);
+  var mids = [].slice.call(w.document.querySelectorAll('[data-smmid]')).map(function (el) { return el.dataset.smmid; });
+  ck('手动混合组合：候选场次来自今日预测（' + mids.length + ' 场 ≥ 3）', mids.length >= 3);
+  ck('手动混合组合：未添加场次时结果区给出引导', cardHtml().indexOf('尚未添加场次') > -1);
+  ck('手动混合组合：候选行含 5 个玩法按钮', !!mids[0] &&
+    w.document.querySelectorAll('[data-smplay^="' + mids[0] + '|"]').length === 5);
+
+  /* 用玩法 chip 加前两场：001 + 胜平负、002 + 总进球（点击 chip 即自动加入该场） */
+  click('[data-smplay="' + mids[0] + '|胜平负"]');
+  click('[data-smplay="' + mids[1] + '|总进球"]');
+  var mrows = rowLegs();
+  ck('手动混合组合：两场各 1 玩法 → 2 串 1 出结果（' + mrows.length + ' 组）', mrows.length >= 1);
+  ck('手动混合组合：每注 2 腿（实际 ' + (mrows[0] ? mrows[0].legs.length : '-') + '）',
+    !!mrows[0] && mrows[0].legs.length === 2);
+  var mBad = mrows.filter(function (r) { return !sameObj(legsByPlay(r.legs), { '胜平负': 1, '总进球': 1 }); });
+  ck('手动混合组合：每注腿构成 = 胜平负 1 条 + 总进球 1 条（不合格 ' + mBad.length + ' 组）',
+    mrows.length > 0 && mBad.length === 0, mBad.length ? '例：' + str(legsByPlay(mBad[0].legs)) : '');
+  var mDup = mrows.filter(function (r) {
+    var nos = r.legs.map(function (l) { return l && l.no; });
+    return new Set(nos).size !== nos.length;
+  });
+  ck('手动混合组合：同一场比赛不重复串联（重复行 ' + mDup.length + '）', mDup.length === 0);
+  var mTtg = mrows.length && mrows[0].legs.filter(function (l) { return l && l.play === '总进球'; })[0];
+  ck('手动混合组合：总进球腿为复式（2 个结果、带「取最高」，' + (mTtg ? mTtg.sels.join('、') + '@' + mTtg.oddsTxt : '-') + '）',
+    !!mTtg && mTtg.n === 2 && /取最高/.test(mTtg.oddsTxt));
+
+  /* 同场再加一个玩法 → 该场出现两个可选腿，组合数应增加 */
+  click('[data-smplay="' + mids[0] + '|总进球"]');
+  var mrows2 = rowLegs();
+  ck('手动混合组合：同场加选玩法后组合数增加（' + mrows2.length + ' > ' + mrows.length + '）',
+    mrows2.length > mrows.length);
+  var mixBad = mrows2.filter(function (r) {
+    return !r.legs.every(function (l) { return l && (l.play === '胜平负' || l.play === '总进球'); });
+  });
+  ck('手动混合组合：只出现勾选过的玩法（不合格 ' + mixBad.length + ' 组）', mixBad.length === 0);
+
+  /* simLast 精确口径：腿赔率 = 腿内最高 SP、腿概率 = 相加、组合赔率 = 相乘 */
+  var MS = w.JX.simLast();
+  ck('手动混合组合：腿赔率 = 腿内最高 SP（按内部数据）',
+    !!MS && MS.shown.length > 0 && MS.shown.every(function (c) {
+      return c.legs.every(function (lg) {
+        var mx = Math.max.apply(null, lg.legs.map(function (l) { return l.sp; }));
+        return Math.abs(mx - lg.sp) < 1e-9;
+      });
+    }));
+  ck('手动混合组合：联合概率 = 各腿腿概率相乘、腿概率 = 腿内各结果概率相加',
+    !!MS && MS.shown.every(function (c) {
+      var want = c.legs.reduce(function (a, lg) {
+        return a * lg.legs.reduce(function (b, l) { return b + l.p; }, 0);
+      }, 1);
+      return Math.abs(want - c.p) < 1e-9 && Math.abs(c.legs.reduce(function (a, lg) { return a * lg.sp; }, 1) - c.sp) < 1e-9;
+    }));
+
+  /* 勾选第 3 场（checkbox：默认带全部可用玩法）+ 3 串 1
+     注意：jsdom 与浏览器一样会在 click 时执行 checkbox 激活行为（翻转 checked），
+     所以此处直接点击「未选中」的 checkbox，让它在事件派发时翻为 true。 */
+  var cb = w.document.querySelector('[data-smmid="' + mids[2] + '"]');
+  if (cb && !cb.checked) cb.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  click('[data-sk="3"]');
+  var mrows3 = rowLegs();
+  ck('手动混合组合：勾选第 3 场 + 3 串 1 出结果（' + mrows3.length + ' 组）', mrows3.length > 0);
+  ck('手动混合组合：3 串 1 每注 3 腿（实际 ' + (mrows3[0] ? mrows3[0].legs.length : '-') + '）',
+    !!mrows3[0] && mrows3[0].legs.length === 3);
+  ck('手动混合组合：勾选场次后 checkbox 置亮',
+    (w.document.querySelector('[data-smmid="' + mids[2] + '"]') || {}).checked === true);
+
+  /* 手动模式渲染卫生 + PNG 导出 */
+  var mHtml = cardHtml();
+  ck('手动混合组合：无 NaN / undefined', mHtml.indexOf('NaN') === -1 && mHtml.indexOf('undefined') === -1);
+  var mUrl = null, mErr = null;
+  try { mUrl = w.JX.simExportDataURL(); } catch (e) { mErr = e; }
+  ck('手动混合组合：PNG 长图可生成', !mErr && !!mUrl, mErr ? mErr.message : '');
+
+  /* 清空选择 → 回到引导态 */
+  click('[data-smclear]');
+  ck('手动混合组合：清空后回到「尚未添加场次」引导', cardHtml().indexOf('尚未添加场次') > -1);
+  ck('手动混合组合：清空后无结果表', host().querySelector('table.tbl') === null);
 
   console.log('== 6. 构成文案与参数区说明 ==');
   click('[data-scombo="ttg"]');
