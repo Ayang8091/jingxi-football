@@ -1,0 +1,6 @@
+[
+  { "date": "2026-10-06", "matchNum": "周二001", "home": "Arsenal", "away": "Chelsea", "result": "h", "sp": { "h": 2.1, "d": 3.4, "a": 3.2 } },
+  { "date": "2026-10-06", "matchNum": "周二002", "home": "Bayern Munich", "away": "Dortmund", "result": "d", "sp": { "h": 1.8, "d": 3.9, "a": 3.6 } },
+  { "date": "2026-10-06", "matchNum": "周二003", "home": "Inter Milan", "away": "Napoli", "result": "a", "sp": { "h": 2.5, "d": 3.1, "a": 2.7 } },
+  { "date": "2026-10-06", "matchNum": "周二004", "home": "Lyon", "away": "Marseille", "result": "h", "sp": { "h": 2.3, "d": 3.2, "a": 3.0 } }
+]

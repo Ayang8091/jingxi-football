@@ -16,3 +16,6 @@ dist/
 *.pem
 *.key
 credentials.json
+
+# 预测数据源运行时缓存（本地生成，不入库）
+api/cache/
