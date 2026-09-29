@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>竞彩足球预测数据源调研报告</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 40px 24px; color: #1a1a1a; line-height: 1.7; font-size: 14px; }
+  h1 { font-size: 26px; border-bottom: 3px solid #1a73e8; padding-bottom: 12px; }
+  h2 { font-size: 19px; margin-top: 32px; border-left: 4px solid #1a73e8; padding-left: 10px; }
+  h3 { font-size: 15px; margin-top: 20px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 12.5px; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #f0f4ff; }
+  code { background: #f5f5f5; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  pre { background: #f7f7f9; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; color: #fff; }
+  .t-rec { background: #1a73e8; } .t-ok { background: #2e8b57; } .t-warn { background: #e8a013; } .t-bad { background: #c0392b; }
+  .meta { color: #666; font-size: 12px; }
+  blockquote { border-left: 3px solid #ccc; margin: 10px 0; padding: 4px 14px; color: #555; background: #fafafa; }
+</style>
+</head>
+<body>
+
+<h1>竞彩足球预测数据源调研与接入方案</h1>
+<p class="meta">竞析 JINGXI · 2026-09-29 · 目标：筛选准确率较高且稳定的公开预测接口，接入后用真实赛果回测持续优化</p>
+
+<h2>一、结论先行（TL;DR）</h2>
+<ul>
+  <li><b>立即接入（免费、零成本起步）</b>：① <b>API-Football 免费层</b>（100 次/天，覆盖全玩法预测，含中场/阵容特征）＋ ② <b>boggio Football Prediction API 免费层</b>（50 次/天，自带「近 1/7/14/30 天命中率」官方统计端点，是唯一开箱即有准确率口碑背书的源）。</li>
+  <li><b>必做基线</b>：<b>官方竞彩 SP 隐含概率</b>（1/SP 去水）——它是市场共识，任何外部源先跟它比，<b>跑不赢 SP 就没有接入价值</b>（文献结论：没有公开模型能长期稳定跑赢收盘赔率）。</li>
+  <li><b>国内源</b>：雷速/球探等官方数据服务均需商务合作（无自助 API）；市面「99 元/月」类站点多为第三方转售，稳定性与合规存疑，不建议主力依赖。竞彩玩法本身以体彩官方接口为准（已在用）。</li>
+  <li><b>已落地</b>：接入层 <code>tools/predict-providers.js</code>（4 个 Provider + 重试 + 缓存 + 密钥管理）与回测 <code>tools/backtest-providers.js</code>（命中率 / Brier / LogLoss / ROI），37 项测试全绿，今日真实数据已验证（8 场）。</li>
+  <li><b>现实预期</b>：胜平负 Top-1 命中率的市场公平水平约 <b>52%~55%</b>（平衡测试集）；命中率提升的主要空间在<b>概率校准</b>（Brier/LogLoss）与<b>价值筛选</b>（EV>0 的场次），而不是盲目追高 Top-1。</li>
+</ul>
+
+<h2>二、数据源对比总表</h2>
+
+<h3>国际预测类 API（可直接自助开通）</h3>
+<table>
+<tr><th>数据源</th><th>覆盖范围</th><th>更新频率</th><th>调用限制</th><th>收费</th><th>准确率口碑</th><th>推荐度</th></tr>
+<tr>
+  <td><b>API-Football</b><br>(api-sports.io)</td>
+  <td>1200+ 联赛；predictions 端点含 1X2 概率、大小球、BTTS、对比数据（近5场/交锋/排名）</td>
+  <td>赛前每日更新，临近开赛刷新</td>
+  <td>免费 100 次/天；Pro 7500 次/天</td>
+  <td>免费层 $0；Pro $19/月</td>
+  <td>社区大、文档全；预测即成色一般（ consensus 类），适合做特征而非直接采信</td>
+  <td><span class="tag t-rec">推荐接入</span></td>
+</tr>
+<tr>
+  <td><b>Football Prediction API</b><br>(boggio, RapidAPI)</td>
+  <td>主流联赛 + 部分次级；1X2、大小 2.5/3.5、BTTS、主/客进球</td>
+  <td>每日刷新</td>
+  <td>免费 50 次/天</td>
+  <td>免费层 $0；付费约 $10+/月</td>
+  <td><b>唯一自带 performance-stats 端点</b>（近 1/7/14/30 天准确率公开可查），评估成本最低</td>
+  <td><span class="tag t-rec">推荐接入</span></td>
+</tr>
+<tr>
+  <td><b>Forebet</b>（经 Apify/Parse 第三方）</td>
+  <td>1X2 概率、精确比分、大小球、亚洲盘、角球牌数；历史预测页可抓</td>
+  <td>赛前多次刷新模型</td>
+  <td>Parse 免费 200 credits；Apify 约 $0.1/千条</td>
+  <td>按量计费，小规模近乎免费</td>
+  <td>老牌公开模型，多年公开历史准确率（1X2 约 50%~55%，联赛差异大）；<b>无官方 API</b>，第三方抓取有断供风险</td>
+  <td><span class="tag t-ok">可作参考源</span></td>
+</tr>
+<tr>
+  <td><b>Sportmonks</b></td>
+  <td>2200+ 联赛；自带 predictions API（xG、概率）；99.99% SLA</td>
+  <td>实时级</td>
+  <td>按套餐</td>
+  <td>€29/月起（预测等功能需附加包，实际 €50+/月）</td>
+  <td>商业口碑好、支持好</td>
+  <td><span class="tag t-warn">预算充足再上</span></td>
+</tr>
+<tr>
+  <td><b>Football-Data.org</b></td>
+  <td>12 大联赛赛程/赛果（<b>无预测</b>）</td>
+  <td>分钟级</td>
+  <td>免费 10 次/分钟</td>
+  <td>免费；付费 €49/月起</td>
+  <td>—（不做预测）</td>
+  <td><span class="tag t-ok">补赛果用</span></td>
+</tr>
+<tr>
+  <td><b>Sportradar / Opta / Genius</b></td>
+  <td>企业级全量（含官方概率 API）</td>
+  <td>秒级</td>
+  <td>合同制</td>
+  <td>€1300~5000+/月</td>
+  <td>行业最高</td>
+  <td><span class="tag t-bad">成本不匹配</span></td>
+</tr>
+</table>
+
+<h3>国内数据源</h3>
+<table>
+<tr><th>数据源</th><th>覆盖</th><th>接入方式</th><th>收费</th><th>评估</th></tr>
+<tr><td><b>体彩官方</b>（webapi.sporttery.cn）</td><td>竞彩全部玩法 SP、赛程、赛果</td><td>公开接口，CORS 全开（<b>已在用</b>）</td><td>免费</td><td><span class="tag t-ok">唯一权威 SP 源</span>；赛果接口对本机 WAF 拦截，需另想办法</td></tr>
+<tr><td><b>雷速体育</b>（上海炫体）</td><td>比分/赔率/AI 预测</td><td>无公开自助 API，需商务合作</td><td>企业报价</td><td><span class="tag t-warn">个人项目难接入</span></td></tr>
+<tr><td>「雷速数据」等转售站（如 leisushuju.lol）</td><td>宣称 5000 次/天免费、99 元/月</td><td>自助 API Key</td><td>低价/免费层</td><td><span class="tag t-bad">第三方转售</span>：来源不明、随时断供、合规存疑，最多试水</td></tr>
+<tr><td><b>球探体育 tita</b></td><td>比分/情报/指数</td><td>商务合作</td><td>企业报价</td><td><span class="tag t-warn">同雷速</span></td></tr>
+</table>
+
+<h3>免费历史数据（自建模型 / 回测素材）</h3>
+<table>
+<tr><th>来源</th><th>内容</th><th>用途</th></tr>
+<tr><td>football-data.co.uk</td><td>20+ 联赛多年赛果 + 多家收盘赔率（CSV）</td><td>回测基线、自建模型训练（最推荐）</td></tr>
+<tr><td>StatsBomb Open Data</td><td>部分联赛事件级数据（xG）</td><td>特征工程（xG 是最强单特征）</td></tr>
+<tr><td>Kaggle 足球数据集</td><td>多套维护中的赛果/Elo/赔率语料</td><td>快速实验</td></tr>
+</table>
+
+<h2>三、接入方案（已实现）</h2>
+
+<h3>1. 架构：统一 Provider 适配层</h3>
+<pre>
+tools/predict-providers.js          ← 接入层（本次新增）
+  ├─ PROVIDERS.sportterySP          官方 SP devig 基线（离线可跑，无密钥）
+  ├─ PROVIDERS.apiFootball          GET /v3/predictions?date=   (x-apisports-key)
+  ├─ PROVIDERS.footballPrediction   GET /api/v2/predictions     (X-RapidAPI-Key)
+  ├─ PROVIDERS.apifyForebet         Apify Actor run-sync        (token)
+  ├─ PROVIDERS.mock                 测试桩（fetchImpl 注入，不打外网）
+  └─ fetchDay(date, opts)           调度入口 → 统一记录结构 → 磁盘缓存
+
+统一输出记录：
+{ provider, date, matchKey, home, away, market:'had',
+  probs:{h,d,a}（和=1）, pick（概率最高方向）, odds, fetchedAt }
+
+tools/backtest-providers.js         ← 回测评估（本次新增）
+</pre>
+
+<h3>2. API 密钥配置</h3>
+<p>优先级：环境变量 &gt; <code>~/.jingxi-predict-keys.json</code>（建议后者，权限 600，不入库——已在 .gitignore 屏蔽 <code>api/cache/</code>，密钥文件在 HOME 下本身不入库）：</p>
+<pre>
+# 方式一：环境变量
+export JX_KEY_APIFOOTBALL=你的key      # api-football.com 免费注册
+export JX_KEY_RAPIDAPI=你的key         # RapidAPI 订阅 Football Prediction 免费层
+export JX_KEY_APIFY=你的token          # apify.com 免费注册
+
+# 方式二（推荐）：~/.jingxi-predict-keys.json
+{ "apiFootball": "...", "rapidApi": "...", "apify": "..." }
+chmod 600 ~/.jingxi-predict-keys.json
+</pre>
+
+<h3>3. 请求封装 / 解析 / 重试 / 缓存</h3>
+<table>
+<tr><th>机制</th><th>实现</th></tr>
+<tr><td>请求封装</td><td><code>fetchWithRetry()</code>：15s 超时（AbortController）、可注入 fetchImpl</td></tr>
+<tr><td>异常重试</td><td>429/5xx 指数退避（1s→2s→4s，上限 30s，默认 3 次）；4xx 直接抛错不重试</td></tr>
+<tr><td>数据解析</td><td>各 Provider 独立 <code>parse()</code>，非 JSON / 缺字段容错（产出 0 条而不炸）；概率统一归一化（和=1）；无概率时用赔率反推（1/SP）</td></tr>
+<tr><td>缓存</td><td><code>api/cache/predictions/&lt;provider&gt;/&lt;date&gt;.json</code>，TTL 6 小时，<code>--no-cache</code> 可绕过；运行时缓存不入库</td></tr>
+<tr><td>跨源对齐</td><td>队名归一化（去 FC/AC 前后缀、常见别名映射）+ 双别名 key（官方场次号优先、归一化队名兜底）</td></tr>
+</table>
+
+<h3>4. 使用方式</h3>
+<pre>
+node tools/predict-providers.js --date 2026-09-29                        # 全部源
+node tools/predict-providers.js --date 2026-09-29 --provider apiFootball # 指定源
+node tools/backtest-providers.js --results tools/fixtures/backtest-results.json
+</pre>
+
+<h2>四、适用场景与局限</h2>
+<table>
+<tr><th>源</th><th>适用场景</th><th>局限</th></tr>
+<tr><td>API-Football</td><td>每日批量拉取预测做「第二意见」；免费额度足够 8~15 场/天</td><td>免费层 100 次/天封顶；预测为通用共识，对竞彩冷门联赛（女足/青年赛）覆盖弱；队名需映射</td></tr>
+<tr><td>Football Prediction API</td><td>持续跟踪一个有公开准确率背书的模型；其 performance-stats 可当第三方 benchmark</td><td>50 次/天只能查 1~2 天；联赛覆盖少于 API-Football；市场 classic=1X2，无让球/总进球概率明细（部分玩法只有 yes/no）</td></tr>
+<tr><td>Forebet（Apify）</td><td>需要精确比分/大小球/亚洲盘多玩法参考时；历史预测页可回溯补历史</td><td>非官方 API，页面改版即断；按量计费但量小成本低；概率口径为其自有模型，校准度需自行回测</td></tr>
+<tr><td>sportterySP 基线</td><td>一切对比的锚点；也是「无外部源」时的下限保障</td><td>隐含概率含抽水（devig 只能去除大部分）；只反映市场定价，不含基本面信息</td></tr>
+<tr><td>国内转售 API</td><td>—</td><td>合规与稳定性风险，不建议生产依赖</td></tr>
+</table>
+<blockquote><b>关键提醒</b>：竞彩玩法中「胜平负」以外的玩法（总进球/比分/半全场）公开预测源覆盖很弱，外部源主要提升的是 <b>1X2 方向与进球数预期</b>；竞彩特有的让球盘仍要靠官方 SP + 站内模型。</blockquote>
+
+<h2>五、命中率评估方法（已实现，可持续运行）</h2>
+
+<h3>1. 指标口径</h3>
+<table>
+<tr><th>指标</th><th>公式</th><th>解读</th><th>瞎猜基线</th></tr>
+<tr><td>Top-1 命中率</td><td>pick == 实际赛果 的比例</td><td>直观；但平局少的联赛会虚高</td><td>≈33%（均衡时）</td></tr>
+<tr><td>多分类 Brier ↓</td><td>Σ(预测概率 − 实际01向量)² / n</td><td>考察<b>概率校准</b>，比命中率更科学</td><td>≈0.667</td></tr>
+<tr><td>LogLoss ↓</td><td>−ln(实际方向的预测概率) 均值</td><td>惩罚「自信地错」</td><td>≈1.099</td></tr>
+<tr><td>ROI（官方 SP）</td><td>按 pick 买入，中了拿 SP、没中损 1 注的均值</td><td><b>最终标准</b>：命中率高低不重要，能不能赢抽水才重要</td><td>−100%×抽水率（竞彩约 −18% 前提下需 55%+ 命中高 SP 才打平）</td></tr>
+</table>
+
+<h3>2. 回测流程（每赛后运行）</h3>
+<pre>
+① 收预测：node tools/predict-providers.js --date &lt;开赛日&gt;   （写入 api/cache/predictions/）
+② 填赛果：官方 App/网页核对后填 tools/fixtures/backtest-results.json（或逐日文件）
+   { "date":"2026-09-29", "matchNum":"周二008", "home":"苏格兰", "away":"瑞士",
+     "result":"a", "sp":{ "h":4.22, "d":3.36, "a":1.68 } }
+③ 跑回测：node tools/backtest-providers.js --results &lt;结果文件&gt;
+④ 决策：连续 ≥100 场样本上，命中率与 Brier 同时跑赢 sportterySP 基线的源才保留；
+   两个源概率接近时用逆方差加权/简单平均融合，融合后重新回测。
+</pre>
+
+<h3>3. 持续优化闭环</h3>
+<ul>
+  <li><b>样本量纪律</b>：单日 8~15 场波动极大，评估窗口至少 <b>100~200 场</b>；先看 Brier 再看 ROI。</li>
+  <li><b>融合优于二选一</b>：把各源概率与 SP 隐含概率做加权平均（权重 = 各自回测 Brier 的倒数），通常优于任何单一源。</li>
+  <li><b>价值筛选</b>：只在外部源概率 × 官方 SP &gt; 1（EV&gt;0）的场次上提高置信度输出，这是把「预测准」变成「有价值」的唯一路径。</li>
+  <li><b>后续可加</b>：① 赛果自动抓取（换网络环境或经 CORS 中继绕 WAF）；② 预测写入「今日预测」页做外部参考列；③ 命中率走势页展示。</li>
+</ul>
+
+<h2>六、本次交付清单</h2>
+<table>
+<tr><th>文件</th><th>说明</th></tr>
+<tr><td><code>tools/predict-providers.js</code></td><td>多 Provider 接入层（密钥/重试/缓存/归一化/CLI）</td></tr>
+<tr><td><code>tools/backtest-providers.js</code></td><td>命中率回测 CLI（命中率/Brier/LogLoss/ROI）</td></tr>
+<tr><td><code>tools/predict-providers-test.js</code></td><td>37 项专项测试（mock 注入，全绿）</td></tr>
+<tr><td><code>tools/fixtures/backtest-results.json</code></td><td>赛果文件模板</td></tr>
+<tr><td><code>api/snapshot.json</code></td><td>刷新至 2026-09-29（在售 10 场）</td></tr>
+</table>
+<p class="meta">提交 23bee2b 已推送 GitHub（远程 a30c4eb，tree 校验一致）· 回归测试 render 16/16、parlay 35/35、sim-compose 131/131 全绿</p>
+
+</body>
+</html>
