@@ -15,8 +15,8 @@
      胜平负+总进球组合     胜平负 1 条 + 总进球 2 条       （2 腿）
      让球+总进球组合       让球胜平负 1 条 + 总进球 2 条   （2 腿）
    运行：
-     NODE_PATH=/Users/apple/.workbuddy/binaries/node/workspace/node_modules \
-     /Users/apple/.workbuddy/binaries/node/versions/22.22.2-3/bin/node tools/sim-compose-test.js
+     NODE_PATH=<任意含 jsdom 的 node_modules> node tools/sim-compose-test.js
+     （本机可用 WorkBuddy 内置：export NODE_PATH=/Users/apple/.workbuddy/binaries/node/workspace/node_modules）
    ========================================================================== */
 'use strict';
 var fs = require('fs'), path = require('path'), jsdom = require('jsdom');

@@ -2,7 +2,7 @@
 'use strict';
 var fs = require('fs'), path = require('path'), jsdom = require('jsdom');
 var JSDOM = jsdom.JSDOM, VirtualConsole = jsdom.VirtualConsole;
-var ROOT = '/Users/apple/WorkBuddy/2026-09-14-14-50-46/jingxi';
+var ROOT = path.join(__dirname, '..');   // 可移植：不写死绝对路径
 
 var html = fs.readFileSync(path.join(ROOT, 'parlay.html'), 'utf8');
 var scripts = [];

@@ -185,7 +185,7 @@ var DATE = '2026-10-06';
   ck('归一化队名 key 可命中', !!rMap['2026-10-06|bayern munich+dortmund']);
   /* 用缓存里的 mock 预测跑 CLI 回测（provider=mock） */
   var { execFileSync } = require('child_process');
-  var out = execFileSync('/Users/apple/.workbuddy/binaries/node/versions/22.22.2-3/bin/node',
+  var out = execFileSync(process.execPath,   // 用当前 node，不写死路径（换机器可跑）
     [path.join(__dirname, 'backtest-providers.js'), '--results', path.join(__dirname, 'fixtures', 'backtest-results.json'), '--provider', 'mock'],
     { encoding: 'utf8' });
   var line = out.split('\n').filter(function (l) { return l.indexOf('| mock |') === 0; })[0] || '';
